@@ -7,6 +7,8 @@
 | Portable policy | {{POLICY}} |
 | Update | {{UPDATE}} |
 | Lineage and branch | {{LINEAGE}}, {{BRANCH}} |
+| Parent checkpoint | {{PARENT}} |
+| Experiment started | {{DATE}} |
 | Parameters | {{PARAMETERS}} |
 | Configuration | {{CONFIG}} |
 | Engine | {{ENGINE}} |
@@ -16,8 +18,10 @@
 
 ## Use and training
 
-This policy plays four-player Brass: Birmingham from native observations and public events. It was trained with self-play and PPO. Intended uses include gameplay, evaluation, and research. The release reviewer should fill the parent checkpoint, training dates, number of training games and opponent mixture from the experiment journal.
+This policy plays four-player Brass: Birmingham from native observations and public events. It was trained with self-play and PPO. Intended uses include gameplay, evaluation, and research. {{TRAINING}} The release reviewer should verify the full lineage and opponent mixture.
 
 ## Evaluation and limitations
 
-{{EVALUATION}} Report strict wins after all native tiebreakers, the number of independent deals and seat rotations, and paired intervals. Training replicates are limited. Playing strength against expert human opponents remains unmeasured.
+{{EVALUATION}}
+
+Sole wins use all native tiebreakers. Training replicates are limited. Playing strength against expert human opponents remains unmeasured.

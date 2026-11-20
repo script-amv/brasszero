@@ -6,8 +6,7 @@ cd "$root"
 command -v uv >/dev/null
 export PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1
 rustup component add rustfmt clippy
-uv venv --allow-existing --python "${PYTHON:-python3}" .venv
-uv pip install --python .venv/bin/python ./engine/bindings pytest trueskill mpmath six ruff pre-commit pip-licenses
+sh scripts/setup-core.sh
 npm --prefix site ci --no-audit --no-fund
 .venv/bin/pre-commit install
 if [ -d gui/.git ]; then

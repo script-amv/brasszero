@@ -7,6 +7,7 @@ import * as Plot from '@observablehq/plot';
 type Era = 'canal' | 'rail';
 interface Window {
   lo: number; hi: number; policies: number; seat_games: number;
+  samples: Record<string, Record<string, number>>;
   actions: Record<string, number> | null;
   loans: Record<Era, number | null>; income: Record<Era, number | null>;
   unflipped: Record<Era, number | null>; network: Record<Era, number | null>;
@@ -71,7 +72,7 @@ const charts: Record<string, (d: TrainingRecord, width: number, era?: Era) => SV
   },
 
   actions(d, width) {
-    const rows = d.windows.filter((w) => w.actions).flatMap((w) => ACTIONS.map((a) => ({ x: mid(w), w, action: a, share: w.actions![a] })));
+    const rows = d.windows.filter((w) => w.actions).flatMap((w) => ACTIONS.map((a) => ({ x: mid(w), w, action: a, share: w.actions![a], count: w.samples.actions![a] })));
     return Plot.plot({
       ...base(width, width < 640 ? 280 : 380),
       ariaLabel: 'Share of each main action by model update',
@@ -80,13 +81,13 @@ const charts: Record<string, (d: TrainingRecord, width: number, era?: Era) => SV
       marks: [
         Plot.areaY(rows, { x: 'x', y: 'share', fill: 'action', order: ACTIONS }),
         Plot.ruleX(rows, Plot.pointerX({ x: 'x', stroke: css('--color-paper'), strokeOpacity: 0.5 })),
-        Plot.tip(rows, Plot.pointerX(Plot.stackY({ ...tip(), x: 'x', y: 'share', z: 'action', order: ACTIONS, title: (r) => `${label(r.w)}\n${r.action}: ${r.share.toFixed(1)}%` }))),
+        Plot.tip(rows, Plot.pointerX(Plot.stackY({ ...tip(), x: 'x', y: 'share', z: 'action', order: ACTIONS, title: (r) => `${label(r.w)}\n${r.action}: ${r.share.toFixed(1)}%\n${r.count.toLocaleString('en')} main actions` }))),
       ],
     });
   },
 
   sources(d, width) {
-    const rows = d.windows.filter((w) => w.sources).flatMap((w) => SOURCES.map((s) => ({ w, x1: w.lo, x2: w.hi + 1, source: s, vp: Math.max(0, w.sources![s] ?? 0) })));
+    const rows = d.windows.filter((w) => w.sources).flatMap((w) => SOURCES.map((s) => ({ w, x1: w.lo, x2: w.hi + 1, source: s, count: w.samples.sources![s], vp: Math.max(0, w.sources![s] ?? 0) })));
     return Plot.plot({
       ...base(width, width < 640 ? 300 : 400),
       ariaLabel: 'Victory points by scoring source per window',
@@ -94,14 +95,14 @@ const charts: Record<string, (d: TrainingRecord, width: number, era?: Era) => SV
       color: { domain: SOURCES, range: SOURCE_COLORS },
       marks: [
         Plot.rectY(rows, { x1: 'x1', x2: 'x2', y: 'vp', fill: 'source', order: SOURCES, insetLeft: 2, insetRight: 2 }),
-        Plot.tip(rows, Plot.pointer(Plot.stackY({ ...tip(), x: (r) => (r.x1 + r.x2) / 2, y: 'vp', z: 'source', order: SOURCES, title: (r) => `${label(r.w)}\n${SOURCE_LABELS[r.source]}: ${r.vp.toFixed(1)} VP` }))),
+        Plot.tip(rows, Plot.pointer(Plot.stackY({ ...tip(), x: (r) => (r.x1 + r.x2) / 2, y: 'vp', z: 'source', order: SOURCES, title: (r) => `${label(r.w)}\n${SOURCE_LABELS[r.source]}: ${r.vp.toFixed(1)} VP\n${r.count.toLocaleString('en')} policies` }))),
       ],
     });
   },
 
   built(d, width) {
     const keys = Object.keys(INDUSTRY_LABELS);
-    const rows = d.windows.flatMap((w) => keys.map((k) => ({ x: mid(w), w, industry: INDUSTRY_LABELS[k], v: w.built[k] })).filter((r) => r.v != null));
+    const rows = d.windows.flatMap((w) => keys.map((k) => ({ x: mid(w), w, industry: INDUSTRY_LABELS[k], count: w.samples.built![k], v: w.built[k] })).filter((r) => r.v != null));
     return Plot.plot({
       ...base(width, 300),
       ariaLabel: 'Industries built per seat-game by model update',
@@ -109,13 +110,13 @@ const charts: Record<string, (d: TrainingRecord, width: number, era?: Era) => SV
       color: { domain: keys.map((k) => INDUSTRY_LABELS[k]), range: keys.map((k) => INDUSTRY_COLORS[k]) },
       marks: [
         Plot.line(rows, { x: 'x', y: 'v', stroke: 'industry', strokeWidth: 2 }),
-        Plot.tip(rows, Plot.pointer({ ...tip(), x: 'x', y: 'v', title: (r) => `${label(r.w)}\n${r.industry}: ${r.v!.toFixed(2)}` })),
+        Plot.tip(rows, Plot.pointer({ ...tip(), x: 'x', y: 'v', title: (r) => `${label(r.w)}\n${r.industry}: ${r.v!.toFixed(2)}\n${r.count.toLocaleString('en')} seat-games` })),
       ],
     });
   },
 
   twice(d, width) {
-    const rows = d.windows.filter((w) => w.scored_twice != null).map((w) => ({ x: mid(w), w, v: w.scored_twice! }));
+    const rows = d.windows.filter((w) => w.scored_twice != null).map((w) => ({ x: mid(w), w, v: w.scored_twice!, count: w.samples.scored_twice!.value! }));
     return single(rows, width, 'Industry VP scored again in the Rail era', null, [0, 8]);
   },
 
@@ -125,7 +126,7 @@ const charts: Record<string, (d: TrainingRecord, width: number, era?: Era) => SV
   network: (d, width, era) => eraChart(d, width, era!, 'network', 'Link VP per link built', [0, 4]),
 };
 
-function single(rows: { x: number; w: Window; v: number }[], width: number, aria: string, yLabel: string | null, domain: number[], color = css('--color-accent')) {
+function single(rows: { x: number; w: Window; v: number; count: number }[], width: number, aria: string, yLabel: string | null, domain: number[], color = css('--color-accent')) {
   return Plot.plot({
     ...base(width, 260),
     ariaLabel: aria,
@@ -133,15 +134,15 @@ function single(rows: { x: number; w: Window; v: number }[], width: number, aria
     marks: [
       domain[0]! < 0 ? Plot.ruleY([0], { stroke: css('--color-muted') }) : null,
       Plot.line(rows, { x: 'x', y: 'v', stroke: color, strokeWidth: 2.5 }),
-      Plot.dot(rows, { x: 'x', y: 'v', fill: color, r: (r) => (r.w.seat_games < 20 ? 0 : 2.5) }),
-      Plot.dot(rows, { x: 'x', y: 'v', stroke: color, fill: css('--color-ink'), r: (r) => (r.w.seat_games < 20 ? 3 : 0) }),
-      Plot.tip(rows, Plot.pointerX({ ...tip(), x: 'x', y: 'v', title: (r) => `${label(r.w)}\n${r.v.toFixed(2)}\n${r.w.seat_games.toLocaleString('en')} seat-games` })),
+      Plot.dot(rows, { x: 'x', y: 'v', fill: color, r: (r) => (r.count < 20 ? 0 : 2.5) }),
+      Plot.dot(rows, { x: 'x', y: 'v', stroke: color, fill: css('--color-ink'), r: (r) => (r.count < 20 ? 3 : 0) }),
+      Plot.tip(rows, Plot.pointerX({ ...tip(), x: 'x', y: 'v', title: (r) => `${label(r.w)}\n${r.v.toFixed(2)}\n${r.count.toLocaleString('en')} seat-games` })),
     ],
   });
 }
 
 function eraChart(d: TrainingRecord, width: number, era: Era, key: 'loans' | 'income' | 'unflipped' | 'network', yLabel: string, domain: number[]) {
-  const rows = d.windows.filter((w) => w[key][era] != null).map((w) => ({ x: mid(w), w, v: w[key][era]! }));
+  const rows = d.windows.filter((w) => w[key][era] != null).map((w) => ({ x: mid(w), w, v: w[key][era]!, count: w.samples[key]![era]! }));
   return single(rows, width, `${yLabel}, ${era} era`, null, domain, era === 'canal' ? css('--color-brass') : css('--color-accent'));
 }
 

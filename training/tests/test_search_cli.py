@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def run(*args):
     env = dict(os.environ, PYTHONPATH='engine/tools:training:players/search')
-    return subprocess.run([str(ROOT/'engine/bindings/.venv/bin/python'), '-m', 'brass_rl', *args],
+    return subprocess.run([str(os.environ.get('BRASS_CORE_PYTHON', ROOT/'engine/bindings/.venv/bin/python')), '-m', 'brass_rl', *args],
                           cwd=ROOT, env=env, text=True, capture_output=True)
 
 

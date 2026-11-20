@@ -1,6 +1,7 @@
 SHELL := /bin/sh
 PYTHONPATH := $(CURDIR)/engine/tools:$(CURDIR)/training:$(CURDIR)/players/search:$(CURDIR)/players/llm
 export PYTHONPATH
+export BRASS_CORE_PYTHON ?= $(CURDIR)/.venv/bin/python
 export OMP_NUM_THREADS := 1
 export MKL_NUM_THREADS := 1
 export OPENBLAS_NUM_THREADS := 1
@@ -17,12 +18,13 @@ setup-training:
 	@echo "Install the optional verified CPU training environment"
 	@sh scripts/setup-training.sh
 test: test-rust test-py test-site
+	@if test -x training/.venv/bin/python; then $(MAKE) test-training; else echo "Optional training suite needs make setup-training"; fi
 test-rust:
 	@echo "Test the Rust workspace with the locked dependency graph"
 	@cargo test --workspace --locked
 test-py:
 	@echo "Test core native bindings, referee, public players and standard-library tooling"
-	@.venv/bin/python -m pytest -q engine/bindings/tests engine/tools/tests players/llm/tests players/search/tests/test_allocation.py training/tests/test_source.py
+	@.venv/bin/python -m pytest -q tests engine/bindings/tests engine/tools/tests players/llm/tests players/search/tests/test_allocation.py training/tests/test_source.py
 test-training:
 	@echo "Run optional CPU training and search regression tests with temporary data"
 	@training/.venv/bin/python -m pytest -q training/tests players/search/tests
@@ -32,7 +34,7 @@ test-site:
 	@npm --prefix site run build
 lint-python:
 	@echo "Check Python source with Ruff"
-	@.venv/bin/ruff check engine/bindings/tests engine/tools players/llm players/search training/brass_rl training/scripts training/tests scripts site/scripts
+	@.venv/bin/ruff check tests engine/bindings/tests engine/tools players/llm players/search training/brass_rl training/scripts training/tests scripts site/scripts
 lint: lint-python
 	@echo "Check Rust formatting and Clippy warnings"
 	@cargo fmt --all -- --check
@@ -54,10 +56,10 @@ publish-progress:
 	@python3 scripts/site_progress.py publish $(CONFIRM_FLAG)
 release-model:
 	@echo "Build a local portable weight archive and a model card"
-	@python3 scripts/distributions.py model "$(MODEL)"
+	@python3 scripts/distributions.py model "$(MODEL)" $(CONFIRM_FLAG)
 dataset-snapshot:
 	@echo "Build a local game archive, datasheet and checksums"
-	@python3 scripts/distributions.py dataset
+	@python3 scripts/distributions.py dataset $(CONFIRM_FLAG)
 release:
 	@echo "Check the version, citation and changelog; CONFIRM=1 permits a local annotated tag"
 	@python3 scripts/release.py "$(VERSION)" $(CONFIRM_FLAG)

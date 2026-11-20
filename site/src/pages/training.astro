@@ -8,6 +8,8 @@ import ChartFigure from '../components/ChartFigure.astro';
 import Legend from '../components/Legend.astro';
 import { getEntry } from 'astro:content';
 import data from '../../public/data/training-record.json';
+import approved from '../data/claims.json';
+const approvedHeadlines = approved.headlines;
 import coalbrookdale from '../assets/art/coalbrookdale.jpg';
 import lichfield from '../assets/art/os-lichfield.jpg';
 import turner from '../assets/art/turner.jpg';
@@ -38,14 +40,14 @@ const opponents = record.opponents === 'mixed' ? 'three other AI players' : reco
     <Image class="backdrop" src={coalbrookdale} alt="" widths={[640, 1280, 2048]} sizes="100vw" loading="eager" layout="none" />
     <div class="wrap hero-content">
       <p class="kicker">Training record · Updates 0–{meta.latest_update}</p>
-      <h1 id="page-title">Recorded scores by model update</h1>
+      <h1 id="page-title">{approvedHeadlines.score}</h1>
       <p class="lede">
         Each dot is one AI seat’s final score in a recorded game: {meta.ai_seat_scores.toLocaleString('en')} scores
         from {meta.games.toLocaleString('en')} games, on the main line and its experiment branches. The line is the mean per {meta.score_window} model updates.
       </p>
       <div class="status">
         <p class="kicker">{home.data.status.label}</p>
-        <p>Main line at checkpoint <span class="accent">{home.data.status.checkpoint}</span> · Data exported {exported}</p>
+        <p>Main line at checkpoint <span class="accent">{home.data.status.checkpoint}</span> · Data exported {exported} · Headline measurements dated {approved.as_of}</p>
       </div>
       <ChartFigure chart="score" height="26rem" caption={`Updates ${firstMean.lo}–${firstMean.hi}: ${firstMean.n.toLocaleString('en')} scores, mostly evaluations of the untrained model. Updates ${lastMean.lo}–${lastMean.hi}: ${lastMean.n.toLocaleString('en')} scores.`}>
         <Legend slot="legend" items={[
@@ -59,7 +61,7 @@ const opponents = record.opponents === 'mixed' ? 'three other AI players' : reco
 
   <section class="wrap block" aria-labelledby="behaviour">
     <p class="kicker">Behaviour</p>
-    <h2 id="behaviour">How frequently each main action was played</h2>
+    <h2 id="behaviour">{approvedHeadlines.actions}</h2>
     <p class="lede">Early models often passed their turn. By updates {lastW.lo}–{lastW.hi} those actions go to building, developing and selling.</p>
     <ChartFigure chart="actions" height="24rem" caption={`Share of each main action among all main actions, per window of ${meta.window} updates. Follow-up actions are excluded.`}>
       <Legend slot="legend" items={ACTIONS.map((a, i) => ({ label: a, color: ACTION_COLORS[i]! }))} />
@@ -124,7 +126,7 @@ const opponents = record.opponents === 'mixed' ? 'three other AI players' : reco
   <section class="wrap block record" aria-labelledby="record">
     <div class="record-text">
       <p class="kicker">Highest score so far</p>
-      <h2 id="record">Highest recorded score in the archive</h2>
+      <h2 id="record">{approvedHeadlines.record}</h2>
       <p class="lede">Model update {record.update}, an experiment branch from the main line, in an {record.category} game against {opponents}. Breweries and iron works scored {(record.sources?.brewery ?? 0) + (record.sources?.iron ?? 0)} of its {record.vp} points.</p>
       <div class="bar" role="img" aria-label={recSources.map((x) => `${x.label} ${x.vp}`).join(', ')}>
         {recSources.map((x) => <span style={`flex: ${x.vp} 1 0; background: ${x.color}`} title={`${x.label}: ${x.vp}`}></span>)}

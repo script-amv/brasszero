@@ -15,3 +15,6 @@ select = ["E4", "E9", "F"]
 "training/brass_rl/policy_io.py" = ["F401"]
 "training/brass_rl/artifacts.py" = ["F401"]
 "engine/tools/brass_ai/replay_archive.py" = ["F401"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "engine/bindings/tests", "engine/tools/tests", "players/llm/tests"]

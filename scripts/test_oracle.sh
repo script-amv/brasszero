@@ -9,4 +9,4 @@ case "$kind" in
 esac
 if test ! -d "$vendor"; then echo "SKIPPED optional $kind oracle, private reference absent"; exit 0; fi
 if test "$kind" = yuiffy; then cargo build --locked --release --manifest-path lab/oracles/yuiffy-adapter/Cargo.toml; fi
-cargo run --locked --release -p brass_engine --bin brass-diff -- --oracle "$kind" --games "${ORACLE_GAMES:-1}" --seed 1 --adapter "$adapter"
+cargo run --locked --release -p brass_engine --bin brass-diff -- --oracle "$kind" --games "${ORACLE_GAMES:-1}" --seed 1 --adapter "$adapter" --cases "${ORACLE_CASES:-engine/oracles/cases}"

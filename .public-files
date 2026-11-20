@@ -162,6 +162,7 @@ scripts/check_binding_audit.py
 scripts/check_public.py
 scripts/distributions.py
 scripts/release.py
+scripts/setup-core.sh
 scripts/setup-training.sh
 scripts/setup.sh
 scripts/site_dev.py
@@ -217,6 +218,7 @@ site/src/site.config.ts
 site/src/styles/global.css
 site/src/styles/tokens.css
 site/tsconfig.json
+tests/test_publication.py
 training/brass_rl/__init__.py
 training/brass_rl/__main__.py
 training/brass_rl/agent.py

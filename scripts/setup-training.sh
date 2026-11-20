@@ -3,6 +3,8 @@
 set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$root"
+# CLI regressions check a physically separate interpreter without torch.
+if test ! -x .venv/bin/python; then sh scripts/setup-core.sh; fi
 case "$(uname -s)-$(uname -m)" in
  Darwin-x86_64) profile=macos-py39; interpreter=${TRAIN_PYTHON:-/usr/bin/python3} ;;
  Linux-x86_64) profile=linux; interpreter=${TRAIN_PYTHON:-python3.10} ;;
