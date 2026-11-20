@@ -70,3 +70,66 @@ def test_reviewed_art_keeps_its_metadata_inside_the_public_boundary():
     data = encoded + b"private-test-identifier"
     assert "private identifier" in scan_text(image.name, media_text(data), ["private-test-identifier"])
     assert list(scan_text(image.name, media_text(encoded), [])) == []
+
+
+@pytest.mark.parametrize(
+    "fact",
+    [
+        '{ value: "987654", label: "self-play training games so far", claim: C-04 }',
+        "{ value: '586', label: 'self-play training games so far', claim: C-04 }",
+        "claim: C-04\n    value: '586'\n    label: self-play training games so far",
+    ],
+)
+def test_home_facts_use_exact_parsed_claim_values(publication, tmp_path, monkeypatch, fact):
+    import site_progress
+
+    source = site_progress.HOME.read_text()
+    original = "{ value: '1,586', label: 'self-play training games so far', claim: C-04 }"
+    assert original in source
+    page = tmp_path / "home.md"
+    page.write_text(source.replace(original, fact))
+    monkeypatch.setattr(site_progress, "HOME", page)
+    with pytest.raises(ValueError, match="homepage fact.*C-04"):
+        validate(*publication)
+
+
+def test_committed_headlines_must_match_private_projection(publication, tmp_path, monkeypatch):
+    import site_progress
+
+    original = publication[1]
+    stale = copy.deepcopy(original)
+    stale["headlines"]["record"] = "987654 victory points"
+    committed, private = tmp_path / "claims.json", tmp_path / "ledger.md"
+    committed.write_text(json.dumps(stale))
+    private.touch()
+    monkeypatch.setattr(site_progress, "CLAIMS", committed)
+    monkeypatch.setattr(site_progress, "LEDGER", private)
+    monkeypatch.setattr(site_progress, "approved", lambda: original)
+    with pytest.raises(ValueError, match="rendered claims differ"):
+        site_progress.validate_current()
+
+
+def test_dataset_omits_cursor_branches_and_private_aliases():
+    from brass_ai.replay_archive import engine_id, labeled_seats, seat_identities
+
+    seats = labeled_seats(["operator-laptop.local", "greedy", "greedy", "random"])
+    record = {
+        "format": "brass-replay/1",
+        "game_id": "1" * 64,
+        "engine_id": engine_id(),
+        "category": "evaluation",
+        "provenance": {},
+        "status": "completed",
+        "initial": {"seed": 12},
+        "seats": seats,
+        "seat_identities": seat_identities(seats),
+        "moves": [],
+        "result": {"ranking": [0, 1, 2, 3], "vp": [4, 3, 2, 1], "winner": 0},
+    }
+    reason, projected = public_record(record)
+    assert reason == "included"
+    assert projected["seats"][0] == {"kind": "ai", "version_id": None}
+    assert "operator-laptop" not in json.dumps(projected)
+    assert projected["seats"][1]["version_id"] == record["seat_identities"][1]["version_id"]
+    record["provenance"]["cursor"] = 0
+    assert public_record(record) == ("changed lineup or branch", None)

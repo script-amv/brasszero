@@ -179,6 +179,7 @@ site/public/data/training-record.json
 site/public/favicon.svg
 site/public/licenses/cormorant-garamond.txt
 site/public/licenses/work-sans.txt
+site/scripts/client-notices.mjs
 site/scripts/export_training_record.py
 site/src/assets/art/CREDITS
 site/src/assets/art/arkwright.jpg

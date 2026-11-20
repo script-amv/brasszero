@@ -7,6 +7,6 @@ The project icon is original. Attribution for each public-domain painting and ma
 is recorded in site/src/assets/art/CREDITS and displayed in the website footer.
 Cormorant Garamond and Work Sans are distributed through Fontsource under the
 SIL Open Font License 1.1. The website build includes the font package notices.
-Observable Plot is distributed under its ISC licence. Astro and bundled package
-notices remain in the package distributions. Game records carry CC BY 4.0, as
+The website distributes the full license notices for its browser dependencies,
+including Observable Plot, at /licenses/client-dependencies.md. Game records carry CC BY 4.0, as
 specified in docs/DATASHEET.md.

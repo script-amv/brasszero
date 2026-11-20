@@ -7,6 +7,7 @@ export MKL_NUM_THREADS := 1
 export OPENBLAS_NUM_THREADS := 1
 export RUST_TEST_THREADS := 1
 export CARGO_BUILD_JOBS ?= 1
+SITE_PYTHON ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python3)
 SITE_PORT ?= 4321
 GUI_PORT ?= 8773
 CONFIRM_FLAG = $(if $(filter 1,$(CONFIRM)),--confirm,)
@@ -30,7 +31,7 @@ test-training:
 	@training/.venv/bin/python -m pytest -q training/tests players/search/tests
 test-site:
 	@echo "Validate the committed aggregate, type-check and build the Astro site"
-	@python3 scripts/site_progress.py validate
+	@$(SITE_PYTHON) scripts/site_progress.py validate
 	@npm --prefix site run build
 lint-python:
 	@echo "Check Python source with Ruff"
@@ -47,13 +48,13 @@ play:
 	@if test -x gui/play; then GUI_PORT="$(GUI_PORT)" exec gui/play; else echo "The optional play interface is available in the private workspace."; fi
 site-dev:
 	@echo "Refresh and serve the site on loopback port $(SITE_PORT)"
-	@python3 scripts/site_dev.py --port "$(SITE_PORT)"
+	@$(SITE_PYTHON) scripts/site_dev.py --port "$(SITE_PORT)"
 site-data:
 	@echo "Refresh and validate the public research aggregates"
-	@python3 scripts/site_progress.py data
+	@$(SITE_PYTHON) scripts/site_progress.py data
 publish-progress:
 	@echo "Validate site data, review the diff; CONFIRM=1 permits a local commit"
-	@python3 scripts/site_progress.py publish $(CONFIRM_FLAG)
+	@$(SITE_PYTHON) scripts/site_progress.py publish $(CONFIRM_FLAG)
 release-model:
 	@echo "Build a local portable weight archive and a model card"
 	@python3 scripts/distributions.py model "$(MODEL)" $(CONFIRM_FLAG)

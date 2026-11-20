@@ -18,3 +18,5 @@ Repeated packaging keeps identical outputs. Replacing a different local model ca
 Keep `PUBLIC_LAUNCHED=false` until launch. One repository variable controls both the robots meta tag and the HTTP noindex header. Set `SITE_URL` to the site's public origin when ready. Use Pages Access for restricted preview audiences. Model weights and repository code carry Apache-2.0. Published game records carry CC BY 4.0.
 
 At each dependency, binding or interpreter change and before tagging a release, review the two retained PyO3 advisory exceptions in [SECURITY.md](../SECURITY.md). Run `python3 scripts/check_binding_audit.py` and `cargo deny check advisories licenses`.
+
+For a model upload, set `RELEASE_TAG` to the reviewed tag before using the printed GitHub command. The archive contains a standalone `policy/` directory, model card and license. See [usage](USAGE.md) for the checksum and extracted-model evaluation commands. A production site build ships the browser dependencies’ full notices at `/licenses/client-dependencies.md`.

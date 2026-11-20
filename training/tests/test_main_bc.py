@@ -3,6 +3,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from brass_rl.config import TrainConfig
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -20,7 +22,10 @@ def test_normal_profile_matches_score_terminal_and_inherited_league():
 
 
 def test_inventory_uses_exact_identity_for_branches_and_recommendation():
-    cat = json.loads((ROOT/'players/models/catalog.json').read_text())
+    path = ROOT / 'players/models/catalog.json'
+    if not path.exists():
+        pytest.skip('local scientific catalog is absent from a public checkout')
+    cat = json.loads(path.read_text())
     rows = [r for section in ('models','other_preserved_snapshots','unavailable_preserved_snapshots')
             for r in cat[section]]
     assert len({r['policy_id'] for r in rows}) == len(rows)

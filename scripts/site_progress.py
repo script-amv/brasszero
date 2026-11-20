@@ -10,6 +10,8 @@ import re
 import subprocess
 import tempfile
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[1]
 RECORD = ROOT / "site/public/data/training-record.json"
 CLAIMS = ROOT / "site/src/data/claims.json"
@@ -52,14 +54,41 @@ def approved():
         "actions": f"Passing fell from {actions[1]}% to {actions[2]}% of main actions",
         "record": f"{record[1]} victory points",
     }
-    return {"as_of": date, "claims": rows, "headlines": headlines}
+    patterns = {
+        "C-01": (r"plays ([0-9,]+–[0-9,]+) complete random games", "games per second on one laptop CPU core"),
+        "C-04": (r"^([0-9,]+) self-play training games", "self-play training games so far"),
+        "C-06": (r"^([0-9,]+) playable model versions", "playable model versions in the dated inventory"),
+    }
+    facts = {}
+    for claim, (pattern, label) in patterns.items():
+        match = re.search(pattern, rows[claim])
+        if not match:
+            raise ValueError("review the homepage fact for " + claim)
+        facts[claim] = {"value": match[1], "label": label}
+    if "no paid compute" not in rows["C-14"]:
+        raise ValueError("review the C-14 compute claim")
+    facts["C-14"] = {"value": "0", "label": "paid compute on consumer hardware and free cloud CPUs"}
+    return {"as_of": date, "claims": rows, "headlines": headlines, "facts": facts}
+
+
+def frontmatter(path):
+    lines = path.read_text().splitlines()
+    if not lines or lines[0] != "---" or "---" not in lines[1:]:
+        raise ValueError(f"missing Markdown front matter in {path.name}")
+    return yaml.safe_load("\n".join(lines[1 : lines.index("---", 1)]))
+
+
+def validate_current():
+    rendered = json.loads(CLAIMS.read_text())
+    if LEDGER.is_file() and rendered != approved():
+        raise ValueError("rendered claims differ from the private ledger projection; run make site-data")
+    validate(json.loads(RECORD.read_text()), rendered)
 
 
 def validate(record, ledger):
     meta = record["meta"]
-    status_date = dt.date.fromisoformat(
-        re.search(r"^  updated: (\d{4}-\d{2}-\d{2})", HOME.read_text(), re.M).group(1)
-    )
+    home = frontmatter(HOME)
+    status_date = dt.date.fromisoformat(str(home["status"]["updated"]))
     if status_date < dt.date.fromisoformat(meta["exported"]):
         raise ValueError("status date predates the newest chart data")
     scores = record["scores"]
@@ -110,21 +139,28 @@ def validate(record, ledger):
                 value = current if key == "value" else (current or {}).get(key)
                 if type(n) is not int or n < 0 or (value is None) != (n == 0):
                     raise ValueError("sample coverage inconsistent with plotted value")
-    home = HOME.read_text()
-    for value, claim in re.findall(r"value: '([^']+)'.*?claim: (C-\d+)", home):
-        wording = ledger["claims"][claim]
-        if value == "0" and claim == "C-14" and "no paid compute" in wording:
-            continue
-        if value not in wording:
+    seen = set()
+    for fact in home["facts"]:
+        claim = fact["claim"]
+        expected = ledger["facts"].get(claim)
+        if claim in seen or expected is None or fact != {"claim": claim, **expected}:
             raise ValueError("homepage fact disagrees with approved " + claim)
+        seen.add(claim)
+    if seen != set(ledger["facts"]):
+        raise ValueError("homepage fact coverage differs from the approved ledger")
     # User-facing Markdown titles feed Hero, Section and Roadmap components.
     # Numerical titles must be exact approved headlines, never freehand claims.
     for p in (ROOT / "site/src/content").rglob("*.md"):
-        for title in re.findall(r"^(?:\s*-\s*\{\s*)?(?:title|kicker):\s*([^\n]+)", p.read_text(), re.M):
-            title = title.split(", state:", 1)[0].strip().strip("\"'")
+        data = frontmatter(p)
+        titles = [
+            data.get("title"),
+            data.get("kicker"),
+            *(row["title"] for row in data.get("milestones", [])),
+        ]
+        for title in (value for value in titles if value):
             if re.search(r"\d", title) and title not in ledger["headlines"].values():
                 raise ValueError("unapproved Markdown headline: " + p.name)
-    checkpoint = re.search(r"checkpoint: (\d+)", home).group(1)
+    checkpoint = str(home["status"]["checkpoint"])
     if "update " + checkpoint + "." not in ledger["claims"]["C-05"]:
         raise ValueError("unapproved status checkpoint")
     for p in (ROOT / "site/src/pages").glob("*.astro"):
@@ -204,4 +240,4 @@ if __name__ == "__main__":
     elif args.action == "publish":
         publish(args.confirm)
     else:
-        validate(json.loads(RECORD.read_text()), approved())
+        validate_current()

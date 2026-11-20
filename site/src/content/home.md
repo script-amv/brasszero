@@ -11,7 +11,7 @@ facts:
   - { value: '1,586', label: 'self-play training games so far', claim: C-04 }
   - { value: '1,058', label: 'playable model versions in the dated inventory', claim: C-06 }
   - { value: '530–555', label: 'games per second on one laptop CPU core', claim: C-01 }
-  - { value: '0', label: 'paid compute: a 2015 laptop and free cloud CPUs', claim: C-14 }
+  - { value: '0', label: 'paid compute on consumer hardware and free cloud CPUs', claim: C-14 }
 credits:
   - Philip James de Loutherbourg, Coalbrookdale by Night, 1801
   - Society for the Diffusion of Useful Knowledge, Birmingham, 1839

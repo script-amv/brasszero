@@ -84,6 +84,17 @@ def write_file(path, payload):
     Path(f.name).replace(path)
 
 
+# The replay writer can attach an arbitrary operator label to version_id. These
+# closed forms are emitted by the policy, search, league and native baseline code.
+PUBLIC_VERSIONS = {
+    "ai": re.compile(
+        r"(?:policy-sha256-v1:|search-sha256-v1:|(?:initial|training)-[0-9]{6,}:weights-sha256:)[0-9a-f]{64}"
+    ),
+    "greedy": re.compile(r"greedy:native-v1:[0-9a-f]{64}"),
+    "random": re.compile(r"random:native-v1:[0-9a-f]{64}"),
+}
+
+
 def public_record(record):
     p = record["provenance"]
     if (
@@ -99,8 +110,10 @@ def public_record(record):
         return "duplicate alias", None
     if record["category"] not in {"training", "evaluation"}:
         return "outside training/evaluation", None
-    if p.get("parent") is not None or any(
-        x.get("ply") != 0 or x.get("seats") != record["seats"] for x in record.get("lineups", [])
+    if (
+        p.get("parent") is not None
+        or p.get("cursor") is not None
+        or any(x.get("ply") != 0 or x.get("seats") != record["seats"] for x in record.get("lineups", []))
     ):
         return "changed lineup or branch", None
     identities = record.get("seat_identities") or seat_identities(record["seats"], legacy=True)
@@ -110,8 +123,9 @@ def public_record(record):
     for row in identities:
         version = row.get("version_id")
         # Do not ship arbitrary display names, hostnames or paths as agent IDs.
-        if version is not None and not re.fullmatch(r"[A-Za-z0-9._:+-]{1,250}", version):
-            return "private or unresolved identifier", None
+        form = PUBLIC_VERSIONS.get(row["kind"])
+        if form is None or not isinstance(version, str) or not form.fullmatch(version):
+            version = None
         seats.append({"kind": row["kind"], "version_id": version})
     game = canonical_game(record)
     if set(game["initial"]) != {"seed"}:
@@ -310,7 +324,7 @@ def model(identifier, confirm=False):
     with archive_writer(archive, confirm) as tar:
         for p in paths:
             # The 2 GiB gate is above. Stream tensor storage so packing does not duplicate it in memory.
-            info = tarfile.TarInfo(label + "/" + p.name)
+            info = tarfile.TarInfo(label + "/policy/" + p.name)
             info.size = p.stat().st_size
             with p.open("rb") as stream:
                 tar.addfile(info, stream)
@@ -319,7 +333,9 @@ def model(identifier, confirm=False):
     write_file(card_path, card.encode())
     write_file(out / (archive.name + ".sha256"), (sha_file(archive) + "  " + archive.name + "\n").encode())
     print(f"Prepared {archive.relative_to(ROOT)}, weights {sums['policy.pt']}")
-    print(f"gh release upload v0.1.0 dist/models/{archive.name} dist/models/{archive.name}.sha256")
+    print(
+        f'gh release upload "${{RELEASE_TAG:?Set the reviewed release tag}}" dist/models/{archive.name} dist/models/{archive.name}.sha256'
+    )
 
 
 def parameter_count(weights):

@@ -21,6 +21,9 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: site/package-lock.json
+      - run: |
+          python3 -m venv .venv
+          .venv/bin/python -m pip install PyYAML==6.0.3
       - run: npm --prefix site ci
       - run: make test-site
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

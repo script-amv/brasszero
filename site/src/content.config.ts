@@ -2,6 +2,7 @@
 import { defineCollection } from 'astro:content';
 import { glob } from 'astro/loaders';
 import { z } from 'astro/zod';
+import approved from './data/claims.json';
 
 // Every number on the site must map to an approved claim in
 // docs/outreach/CLAIMS.md. `claim` records which one.
@@ -21,7 +22,13 @@ const home = defineCollection({
       imageAlt: z.string(),
       facts: z.array(
         z.object({ value: z.string(), label: z.string(), claim: z.string().regex(/^C-\d{2}$/) }),
-      ),
+      ).refine((facts) => {
+        const reviewed: Record<string, { value: string; label: string }> = approved.facts;
+        return facts.length === Object.keys(reviewed).length
+          && new Set(facts.map((fact) => fact.claim)).size === facts.length
+          && facts.every((fact) => reviewed[fact.claim]?.value === fact.value
+            && reviewed[fact.claim]?.label === fact.label);
+      }, 'Homepage facts must exactly match the approved claim values and labels.'),
       credits: z.array(z.string()),
     }),
 });

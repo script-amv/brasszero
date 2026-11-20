@@ -36,7 +36,7 @@ jobs:
       - run: test ! -e gui && test ! -e lab && test ! -e training/runs && test ! -e players/models && test ! -e engine/oracles/vendor
       - run: |
           uv venv --python "$(command -v python)" .venv
-          uv pip install --python .venv/bin/python ./engine/bindings pytest trueskill mpmath six ruff pip-licenses
+          uv pip install --python .venv/bin/python ./engine/bindings pytest trueskill mpmath six ruff pip-licenses PyYAML==6.0.3
       - run: make test-py lint-python check-public
       - run: .venv/bin/pip-licenses --format=markdown
   training-regressions:
