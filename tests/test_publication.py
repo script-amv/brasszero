@@ -10,7 +10,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
-from check_public import scan_path, scan_text  # noqa: E402
+from check_public import media_text, scan_path, scan_text  # noqa: E402
 from distributions import public_record  # noqa: E402
 from site_progress import CLAIMS, RECORD, validate  # noqa: E402
 
@@ -62,3 +62,11 @@ def test_rejects_unapproved_numeric_page_headline(publication, tmp_path, monkeyp
     monkeypatch.setattr(site_progress, "ROOT", tmp_path)
     with pytest.raises(ValueError, match="headline"):
         validate(*publication)
+
+
+def test_reviewed_art_keeps_its_metadata_inside_the_public_boundary():
+    image = ROOT / "site/src/assets/art/coalbrookdale.jpg"
+    encoded = image.read_bytes()
+    data = encoded + b"private-test-identifier"
+    assert "private identifier" in scan_text(image.name, media_text(data), ["private-test-identifier"])
+    assert list(scan_text(image.name, media_text(encoded), [])) == []

@@ -90,6 +90,34 @@ def scan_text(name, content, private):
             yield "private GUI import"
 
 
+def media_text(data):
+    """Inspect JPEG header metadata and any trailing document, excluding entropy-coded pixels."""
+    if data.startswith(b"\xff\xd8"):
+        offset = 2
+        segments = []
+        while offset < len(data) and data[offset] == 255:
+            while offset < len(data) and data[offset] == 255:
+                offset += 1
+            if offset >= len(data):
+                break
+            marker = data[offset]
+            offset += 1
+            if marker in (0xDA, 0xD9):
+                break
+            size = int.from_bytes(data[offset : offset + 2], "big")
+            if size < 2 or offset + size > len(data):
+                raise ValueError("invalid JPEG metadata block")
+            if 0xE0 <= marker <= 0xEF or marker == 0xFE:
+                segments.append(data[offset + 2 : offset + size])
+            offset += size
+        end = data.rfind(b"\xff\xd9")
+        if end < 0:
+            raise ValueError("missing JPEG terminator")
+        segments.append(data[end + 2 :])
+        data = b"\n".join(segments)
+    return b"\n".join(re.findall(rb"[ -~]{6,}", data)).decode("ascii")
+
+
 def main():
     cli = argparse.ArgumentParser()
     cli.add_argument("--staged", action="store_true")
@@ -128,8 +156,18 @@ def main():
         if p.suffix.lower() in IMAGES:
             if name not in allowed_art:
                 problems.append((name, "uncredited image"))
-            # Binary historic artwork has no executable/text contents. SVG remains scanned.
             if p.suffix.lower() != ".svg":
+                # Credit permits the image, not arbitrary identifying EXIF/XMP/IPTC metadata.
+                # Compressed pixel bytes are not text. Search embedded printable strings and
+                # the common UTF-16 representations of locally configured identifiers.
+                strings = media_text(data)
+                problems.extend((name, msg) for msg in scan_text(name, strings, private))
+                if any(
+                    value.encode(codec) in data
+                    for value in private
+                    for codec in ("utf-8", "utf-16le", "utf-16be")
+                ):
+                    problems.append((name, "embedded private identifier"))
                 continue
         try:
             text = data.decode("utf-8")

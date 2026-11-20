@@ -32,7 +32,20 @@ def main():
     refresh()
     before = stamp()
     proc = subprocess.Popen(
-        ["npm", "--prefix", "site", "run", "dev", "--", "--host", "127.0.0.1", "--port", str(args.port)],
+        # The watcher owns this process. Astro otherwise detaches under automated clients.
+        [
+            "npm",
+            "--prefix",
+            "site",
+            "run",
+            "dev",
+            "--",
+            "--ignore-lock",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(args.port),
+        ],
         cwd=ROOT,
         start_new_session=True,
     )

@@ -6,7 +6,7 @@ Reads the local GUI server's read-only dashboard API (which reduces the replay
 archive and finishes the strategy analysis) and writes a compact JSON file to
 site/public/data/training-record.json. Standard library only.
 
-    python3 site/scripts/export_training_record.py --url http://localhost:8771
+    python3 site/scripts/export_training_record.py --url http://127.0.0.1:8773
 
 The output holds no game seeds, actions or model weights: only per-seat scores
 with their model update, and window aggregates of the dashboard's metrics.
@@ -48,7 +48,7 @@ def weighted(points, key, sub=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--input", type=Path, help="verified local dashboard export")
-    parser.add_argument("--url", default="http://localhost:8771", help="local GUI server")
+    parser.add_argument("--url", default="http://127.0.0.1:8773", help="local GUI server")
     parser.add_argument(
         "--out", default=str(Path(__file__).resolve().parents[1] / "public/data/training-record.json")
     )
