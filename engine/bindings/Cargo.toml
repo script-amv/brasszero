@@ -1,0 +1,24 @@
+[package]
+name = "brass_py"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+name = "brass"
+crate-type = ["cdylib"]
+# No Rust tests: the cdylib test binary would need libpython at load time on macOS.
+# Behaviour is covered by engine/bindings/tests (pytest).
+test = false
+doctest = false
+
+[dependencies]
+brass_engine = { path = "../core" }
+brass_bots = { path = "../../players/baselines" }
+pyo3 = { version = "0.28", features = ["abi3-py39"] }
+serde_json = "1.0.154"
+
+[features]
+# maturin enables this (pyproject.toml); plain `cargo test` leaves it off so the test
+# binary can link libpython on macOS.
+extension-module = ["pyo3/extension-module"]

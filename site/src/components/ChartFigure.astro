@@ -1,0 +1,24 @@
+---
+// SPDX-License-Identifier: Apache-2.0
+// One chart: optional title, the drawing area and a caption with its sample.
+interface Props { chart: string; era?: string; title?: string; caption?: string; height?: string }
+const { chart, era, title, caption, height = '18rem' } = Astro.props;
+---
+<figure class="chart-figure">
+  {title && <h3>{title}</h3>}
+  <slot name="legend" />
+  <div class="chart" data-chart={chart} data-era={era} style={`--h: ${height}`}></div>
+  {caption && <figcaption>{caption}</figcaption>}
+</figure>
+
+<style>
+  .chart-figure { margin: 0; min-width: 0; }
+  h3 { margin: 0 0 0.75rem; font: 600 1rem/1.4 var(--font-body); color: var(--color-paper); }
+  /* Reserve the chart's height before it draws; phones use the drawn height. */
+  .chart { width: 100%; min-height: var(--h); }
+  @media (max-width: 40rem) { .chart { min-height: 0; } }
+  .chart :global(svg) { display: block; max-width: 100%; height: auto; }
+  figcaption { margin-top: 0.75rem; max-width: 46rem; font-size: 0.875rem; line-height: 1.6; color: var(--color-muted); }
+  /* Plot tooltips */
+  .chart :global([aria-label='tip'] path) { fill: var(--color-ink); stroke: var(--color-rule); }
+</style>

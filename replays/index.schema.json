@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Local BrassZero replay summary",
+  "type": "object",
+  "properties": {
+    "game_id": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{32,64}$"
+    },
+    "status": {
+      "type": "string"
+    },
+    "category": {
+      "type": "string"
+    },
+    "seats": {
+      "type": "array"
+    },
+    "plies": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "result": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "seat_versions": {
+      "type": "array"
+    },
+    "created_at": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "provenance": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "game_id",
+    "status",
+    "category",
+    "plies"
+  ],
+  "additionalProperties": true
+}

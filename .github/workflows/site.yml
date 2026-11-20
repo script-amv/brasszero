@@ -1,0 +1,56 @@
+name: Site
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+env:
+  PUBLIC_LAUNCHED: ${{ vars.PUBLIC_LAUNCHED || 'false' }}
+  SITE_URL: ${{ vars.SITE_URL }}
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - run: npm --prefix site ci
+      - run: make test-site
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: site-dist
+          path: site/dist
+          include-hidden-files: true
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    environment: ${{ github.event_name == 'push' && 'production' || 'preview' }}
+    steps:
+      - name: Check Pages configuration
+        id: configured
+        env:
+          TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [[ -n "$TOKEN" && -n "$ACCOUNT" ]]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::Pages credentials are absent. The build artifact remains available."
+          fi
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        if: steps.configured.outputs.ready == 'true'
+        with:
+          name: site-dist
+          path: dist
+      - name: Deploy the built artifact
+        if: steps.configured.outputs.ready == 'true'
+        uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy dist --project-name=brasszero --branch=${{ github.event_name == 'push' && 'main' || format('pr-{0}', github.event.pull_request.number) }}

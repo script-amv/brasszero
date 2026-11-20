@@ -1,0 +1,27 @@
+# Local data, private repositories and licensed reference material
+/gui/
+/lab/
+/players/models/
+/training/runs/
+/replays/games/
+/replays/locks/
+/replays/index.jsonl
+/replays/.*/
+/engine/oracles/vendor/
+/engine/oracles/cases/ts-data.json
+/docs/rules-sources/
+/.superpowers/
+/.worktrees/
+/dist/
+**/target/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+.env*
+node_modules/
+.DS_Store
+*.writer.lock
+/engine/oracles/cases/*.json

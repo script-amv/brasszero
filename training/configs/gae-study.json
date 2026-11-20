@@ -1,0 +1,8 @@
+{
+  "source_run": "training/runs/kaggle-12h-2026-11-18",
+  "parent_manifest_sha256": "645734298abe8eda12bd92f0a4bb7c4b67872c637a7a53d42fd147eb0c452c52",
+  "base_update": 688,
+  "end_update": 700,
+  "arms": {"control": 0.95, "candidate": 0.99},
+  "dev_master_seed": 2650813643903144208
+}

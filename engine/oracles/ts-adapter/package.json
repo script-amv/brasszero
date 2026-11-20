@@ -1,0 +1,12 @@
+{
+  "name": "brass-ts-adapter",
+  "private": true,
+  "description": "JSON-lines adapter driving the vendored TS oracle (oracles/vendor/BrassBirmingham) for brass-diff; see oracles/protocol.md",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "start": "node adapter.mjs"
+  }
+}

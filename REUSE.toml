@@ -1,0 +1,70 @@
+version = 1
+
+# The engine compatibility identity includes these exact bytes in every saved
+# policy and recording. Attach licensing metadata alongside the originals.
+[[annotations]]
+path = ["Cargo.lock", "engine/core/Cargo.toml", "engine/core/src/**/*.rs", "engine/core/src/*.rs", "engine/bindings/tests/fixtures/components.json"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "BrassZero contributors"
+SPDX-License-Identifier = "Apache-2.0"
+
+[[annotations]]
+path = ["engine/tools/tests/fixtures/strategy/*.json"]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "BrassZero contributors"
+SPDX-License-Identifier = "CC-BY-4.0"
+
+# Historical search, referee, native opponent and player-profile identities also hash sources.
+[[annotations]]
+path = [
+  "engine/bindings/Cargo.toml",
+  "engine/bindings/src/lib.rs",
+  "engine/bindings/src/observation_transport.rs",
+  "engine/bindings/src/static_data.rs",
+  "engine/tools/brass_ai/agents.py",
+  "engine/tools/brass_ai/arena.py",
+  "engine/tools/brass_ai/events.py",
+  "engine/tools/brass_ai/fingerprints.py",
+  "engine/tools/brass_ai/replay_archive.py",
+  "engine/tools/brass_ai/seeds.py",
+  "players/baselines/Cargo.toml",
+  "players/baselines/src/greedy.rs",
+  "players/baselines/src/heuristic.rs",
+  "players/baselines/src/lib.rs",
+  "players/baselines/src/random.rs",
+  "players/baselines/src/referee.rs",
+  "players/llm/brass_llm/__init__.py",
+  "players/llm/brass_llm/__main__.py",
+  "players/llm/brass_llm/agent.py",
+  "players/llm/brass_llm/cli.py",
+  "players/llm/brass_llm/history.py",
+  "players/llm/brass_llm/openrouter.py",
+  "players/llm/brass_llm/prompt.py",
+  "players/llm/brass_llm/protocol.py",
+  "players/llm/brass_llm/registry.py",
+  "players/search/brass_search/__init__.py",
+  "players/search/brass_search/agent.py",
+  "players/search/brass_search/allocation.py",
+  "players/search/brass_search/config.py",
+  "players/search/brass_search/identity.py",
+  "players/search/brass_search/inference.py",
+  "players/search/brass_search/simulator.py",
+  "training/brass_rl/agent.py",
+  "training/brass_rl/artifacts.py",
+  "training/brass_rl/__main__.py",
+  "training/brass_rl/config.py",
+  "training/brass_rl/distributions.py",
+  "training/brass_rl/evaluate.py",
+  "training/brass_rl/features.py",
+  "training/brass_rl/model.py",
+  "training/brass_rl/model_inventory.py",
+  "training/brass_rl/policy_io.py",
+  "training/brass_rl/replay.py",
+  "training/brass_rl/schema.py",
+  "training/brass_rl/search_budget.py",
+  "training/brass_rl/search_evaluate.py",
+  "training/brass_rl/seeding.py"
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "BrassZero contributors"
+SPDX-License-Identifier = "Apache-2.0"

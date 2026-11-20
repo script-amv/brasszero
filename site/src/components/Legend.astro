@@ -1,0 +1,19 @@
+---
+// SPDX-License-Identifier: Apache-2.0
+// Key for a chart: swatches (square), dots or lines with labels.
+interface Props { items: { label: string; color: string; shape?: 'square' | 'dot' | 'line' }[] }
+const { items } = Astro.props;
+---
+<ul class="legend">
+  {items.map((i) => (
+    <li><span class:list={['swatch', i.shape ?? 'square']} style={`--c: ${i.color}`} aria-hidden="true"></span>{i.label}</li>
+  ))}
+</ul>
+
+<style>
+  .legend { display: flex; flex-wrap: wrap; gap: 0.375rem 1.25rem; margin: 0 0 1rem; padding: 0; list-style: none; font-size: 0.8125rem; color: var(--color-muted); }
+  li { display: inline-flex; align-items: center; gap: 0.5rem; }
+  .swatch { display: inline-block; width: 0.625rem; height: 0.625rem; background: var(--c); }
+  .dot { border-radius: 50%; }
+  .line { width: 1.25rem; height: 3px; }
+</style>

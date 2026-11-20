@@ -1,0 +1,95 @@
+# Known, deliberate differences between our engine and the oracles.
+# Every entry must cite the RQ-NNN in RULES-QUESTIONS.md that settled it.
+# Tests fail on any difference not listed here, and on any entry that no longer differs.
+
+# Static data vs the TS oracle dump (oracles/cases/ts-data.json, keys from
+# oracles/ts-adapter/dump-data.mjs). Key = flat data key, value = reason with RQ.
+[data]
+# TS `loanBacktrack` clamps to level -10 (space 0). The rulebook forbids the loan instead;
+# TS never offers it (dead defensive code), our `loan_space` returns None.
+"income.loan.0" = "RQ-002: loan illegal below income level -10 (TS helper clamps)"
+"income.loan.1" = "RQ-002: loan illegal below income level -10 (TS helper clamps)"
+"income.loan.2" = "RQ-002: loan illegal below income level -10 (TS helper clamps)"
+
+# Differences with the TS oracle in play (engine/src/bin/brass-diff, `--oracle ts`).
+# Key = harness rule (engine/src/bin/brass-diff/ts_limits.rs) or a structural difference
+# handled by the adapter; value = reason with RQ. Unknown keys are an error; rules not
+# listed here are not applied, so deleting an entry makes its difference show up again.
+[ts]
+# TS keeps one shared discard pile (newGame seeds it with the 4 face-down bottoms); ours
+# keeps one pile per player. The adapter attributes each action's new discards to the actor
+# and clears them at the Canal-to-Rail shuffle, as ours does (no rules effect: piles are
+# only ever shuffled together).
+"shared-discard-pile" = "RQ-037: per-player discard piles (TS models one shared pile)"
+# TS resolves negative income itself (unflipped first, then lowest VP, location id, slot);
+# our players choose which tiles to remove. The harness picks the tile TS would.
+"shortfall-choice" = "RQ-004: the player chooses shortfall tiles (TS: fixed canonical order)"
+# TS Build resolves the slot class itself (opponent overbuild > free slot > own overbuild)
+# and an explicit slotIndex may only choose within that class. The rules let a player
+# overbuild their own tile even with a free slot, or take a free slot instead of an
+# opponent's exhausted mine. The harness only plays slots of the class TS would pick.
+"build-slot-choice" = "RQ-046: the player chooses the slot / overbuild target (TS fixes the class)"
+# TS also removes £0 tiles (Pottery II/IV: half of £0) to cover negative income, before the
+# tiles that raise money; ours never requires them. The harness stops the game (counted, not
+# a mismatch) when the snapshots differ only by such removed tiles.
+"shortfall-zero-value-tile" = "RQ-004: a £0 tile is never removed for a shortfall (TS removes it for nothing)"
+# TS Sell carries one explicit `bonusDevelop`; a second Gloucester bonus in the same Sell
+# action takes TS's canonical industry (first developable in industry order). The harness
+# plays that industry for the second bonus.
+"gloucester-second-bonus" = "RQ-009: the player chooses every Gloucester develop (TS: only the first)"
+# With no tiles and no links on the board, TS lets an Industry card build at any location,
+# including overbuilding an exhausted opponent Coal Mine / Iron Works there; ours opens only
+# free slots outside the network. The harness drops those oracle-only build keys.
+"no-tiles-exception-overbuild" = "RQ-042: the no-tiles exception opens free slots only (TS also allows overbuilds)"
+
+# Differences with the Yuiffy oracle in play (engine/src/bin/brass-diff, `--oracle yuiffy`).
+# Key = harness rule (engine/src/bin/brass-diff/yuiffy_limits.rs) or a structural difference
+# handled by the adapter or by the recorded vendor patch
+# (oracles/yuiffy-adapter/patches/0001-settled-data-points.patch, see oracles/PINNED.md);
+# value = reason with RQ. Same policy as [ts].
+[yuiffy]
+# Yuiffy keeps one shared discard pile; the adapter attributes each action's new discards to
+# the actor and clears them at the Canal-to-Rail shuffle (as for TS).
+"shared-discard-pile" = "RQ-037: per-player discard piles (Yuiffy models one shared pile)"
+# Data deviations that existing RQs settle, corrected in the vendor copy by the recorded patch.
+"manufacturer-ii-income" = "RQ-032: Manufacturer II income +1 (Yuiffy data: 0); corrected by patch"
+"manufacturer-viii-count" = "RQ-028: two Manufacturer VIII tiles (Yuiffy data: 1); corrected by patch"
+"rail-only-tiles" = "RQ-017: Pottery V and Brewery IV are rail-only (Yuiffy: no restriction); corrected by patch"
+"rail-brewery-barrels" = "RQ-033: a brewery built in the Rail Era gets 2 barrels (Yuiffy: always 1); corrected by patch"
+# Yuiffy's Build offers only the first connected mines in its build-location order, not the
+# closest. The adapter accepts our (closest) mine if Yuiffy counts it as connected and
+# stocked, and reports the relaxation; nothing else is relaxed.
+"build-coal-order" = "RQ-013, RQ-014: coal comes from the closest connected mine (Yuiffy: build-location order)"
+# Yuiffy allows overbuilding an exhausted opponent Coal Mine / Iron Works with a tile of the
+# same or a lower level. The harness drops the oracle-only build keys whose only target is
+# such a tile.
+"opponent-overbuild-level" = "RQ-024: an overbuild needs a strictly higher level (Yuiffy: any level on an opponent's tile)"
+# The next three are repaired: when the snapshots after an action differ by exactly the
+# amounts the harness predicts for them from our own state (and nothing else), it sends the
+# oracle an `overwrite` (money, VP, tiles to remove) and compares again.
+# Yuiffy's shortfall sets money to 0 and keeps the whole value of the removed tiles, without
+# paying the rest of the debt from it.
+"shortfall-excess-money" = "RQ-004: only the excess over the debt is kept (Yuiffy keeps the whole tile value)"
+# Yuiffy settles the last Canal round's shortfalls (tile removal, VP loss) after the era-end
+# scoring, so the removed tiles still score and the VP loss comes off the scored total.
+"canal-end-shortfall-order" = "RQ-021: income and shortfall come before era-end scoring (Yuiffy: shortfall after scoring)"
+# Yuiffy removes only canal-only tiles at the end of the Canal Era, so Pottery I stays.
+"pottery-i-kept-at-canal-end" = "RQ-018: Pottery I is a level 1 tile, removed at the end of the Canal Era (Yuiffy keeps it)"
+# With no tiles and no links on the board, Yuiffy (like TS) lets an Industry card overbuild an
+# exhausted opponent Coal Mine / Iron Works anywhere. The harness drops those oracle-only
+# build keys.
+"no-tiles-exception-overbuild" = "RQ-042: the no-tiles exception opens free slots only (Yuiffy also allows overbuilds)"
+# Yuiffy takes iron from the chosen works in order, each until empty or the need is met: it
+# cannot take part of two works' cubes in one action. The harness plays only iron plans with
+# at most one partly used works.
+"iron-split-across-works" = "RQ-047: each iron cube may come from any Iron Works (Yuiffy: whole works in order)"
+# Yuiffy's double rail offers a second link only on a rail-only line, with two rail-only lines
+# free, next to the first link or connected to one of the player's tiles. The harness plays
+# only such second links.
+"double-rail-second-link" = "RQ-020, RQ-035: the second link may be any line next to the network incl. the first link (Yuiffy: rail-only lines near link 1 or own tiles)"
+# Yuiffy asks for one Gloucester develop per Sell and repeats it for a second Gloucester barrel.
+# The harness plays the same industry for a second bonus.
+"gloucester-second-bonus" = "RQ-009: the player chooses every Gloucester develop (Yuiffy repeats the first)"
+# Yuiffy pools the barrels of every connected merchant tile buying the industry for one sale.
+# The harness drops the oracle-only sell keys that only such pooling makes possible.
+"sell-merchant-beer-pool" = "RQ-016: a sale may use only the barrel of the merchant tile it sells to (Yuiffy pools all connected merchants' barrels)"

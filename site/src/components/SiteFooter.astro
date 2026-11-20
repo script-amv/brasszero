@@ -1,0 +1,17 @@
+---
+// SPDX-License-Identifier: Apache-2.0
+import { siteConfig } from '../site.config';
+interface Props { credits: string[] }
+const { credits } = Astro.props;
+---
+<footer class="site-footer">
+  <hr />
+  <p>{siteConfig.name} is an independent research project. Brass: Birmingham is a trademark of Roxley Games. This project is not affiliated with, sponsored by or endorsed by Roxley Games.</p>
+  <p>Paintings and maps, all public domain: {credits.join('; ')}.</p>
+</footer>
+
+<style>
+  .site-footer { max-width: 75rem; margin: 0 auto; padding: 0 var(--gutter) 3rem; font-size: 0.875rem; color: var(--color-muted); }
+  hr { border: 0; border-top: 1px solid var(--color-rule); margin: 0 0 2rem; }
+  p { margin: 0 0 0.75rem; max-width: 60rem; }
+</style>

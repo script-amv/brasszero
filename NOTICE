@@ -1,0 +1,12 @@
+BrassZero
+Copyright BrassZero contributors.
+
+Project-owned software is distributed under Apache License 2.0. The local play
+interface and separately obtained reference engines are outside the distribution.
+The project icon is original. Attribution for each public-domain painting and map
+is recorded in site/src/assets/art/CREDITS and displayed in the website footer.
+Cormorant Garamond and Work Sans are distributed through Fontsource under the
+SIL Open Font License 1.1. The website build includes the font package notices.
+Observable Plot is distributed under its ISC licence. Astro and bundled package
+notices remain in the package distributions. Game records carry CC BY 4.0, as
+specified in docs/DATASHEET.md.

@@ -1,0 +1,1 @@
+{"root_candidates":4,"worlds_per_round":2,"rollout_depth":8,"max_rollouts":12,"value_scale":10.0,"candidate_chunk":1024,"wall_time_seconds":null}

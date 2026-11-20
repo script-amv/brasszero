@@ -1,0 +1,17 @@
+[package]
+name = "brass_bots"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+brass_engine = { path = "../../engine/core" }
+rand = "0.10.3"
+rand_pcg = "0.10.2"
+
+[dev-dependencies]
+criterion = "0.8.2"
+
+[[bench]]
+name = "bot_games"
+harness = false

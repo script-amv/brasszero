@@ -1,0 +1,58 @@
+---
+// SPDX-License-Identifier: Apache-2.0
+// Kicker, heading and body text, with an optional figure on one side.
+// The page alternates `side` so figures go left, right, left, right.
+import Figure from './Figure.astro';
+import Roadmap from './Roadmap.astro';
+import type { ImageMetadata } from 'astro';
+
+interface Props {
+  id: string;
+  kicker: string;
+  title: string;
+  figure?: { image: ImageMetadata; alt: string; caption: string } | undefined;
+  side?: 'left' | 'right';
+  milestones?: Parameters<typeof Roadmap>[0]['items'] | undefined;
+}
+const { id, kicker, title, figure, side = 'left', milestones } = Astro.props;
+---
+<section id={id} class:list={['section', { 'has-figure': figure }]} data-side={side} aria-labelledby={`${id}-title`}>
+  <div class="text">
+    <p class="kicker">{kicker}</p>
+    <h2 id={`${id}-title`}>{title}</h2>
+    <div class="prose"><slot /></div>
+  </div>
+  {figure && <Figure {...figure} />}
+  {milestones && <div class="wide"><Roadmap items={milestones} /></div>}
+</section>
+
+<style>
+  .section {
+    max-width: 75rem;
+    margin-inline: auto;
+    padding: var(--space) var(--gutter);
+    display: grid;
+    gap: clamp(2rem, 6vw, 5rem);
+  }
+  /* Text and figure align to the top. When the text is the shorter of the
+     two it centres against the figure instead. */
+  .text { max-width: var(--measure); align-self: center; }
+  .section :global(.figure) { align-self: start; }
+  .wide { justify-self: stretch; }
+  h2 { margin: 0.75rem 0 1.5rem; font-size: clamp(2.25rem, 4.5vw, 3.6rem); }
+
+  /* Text-only sections sit centred. */
+  .section:not(.has-figure) { justify-items: center; text-align: center; }
+  .section:not(.has-figure) .prose ol { text-align: left; }
+
+  /* On small screens the figure leads; the text stays first in reading order. */
+  .has-figure :global(.figure) { order: -1; }
+
+  @media (min-width: 60rem) {
+    .has-figure { grid-template-columns: 1fr 1fr; }
+    .has-figure .wide { grid-column: 1 / -1; }
+    .has-figure[data-side='left'] :global(.figure) { order: -1; }
+    .has-figure[data-side='right'] :global(.figure) { order: 1; }
+    .has-figure[data-side='right'] .text { justify-self: end; }
+  }
+</style>

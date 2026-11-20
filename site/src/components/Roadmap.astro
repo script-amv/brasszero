@@ -1,0 +1,51 @@
+---
+// SPDX-License-Identifier: Apache-2.0
+// Milestones as steps: state label, numbered title and a short note.
+interface Props {
+  items: { title: string; state: 'done' | 'active' | 'planned'; note: string }[];
+}
+const { items } = Astro.props;
+const stateLabel = { done: 'Done', active: 'In progress', planned: 'Planned' } as const;
+---
+<ol class="roadmap">
+  {items.map((item) => (
+    <li data-state={item.state}>
+      <p class="state">{stateLabel[item.state]}</p>
+      <h3>{item.title}</h3>
+      <p class="note">{item.note}</p>
+    </li>
+  ))}
+</ol>
+
+<style>
+  .roadmap {
+    list-style: none;
+    counter-reset: step;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 10.5rem), 1fr));
+    gap: 2.5rem 1.5rem;
+    text-align: left;
+  }
+  @media (min-width: 64rem) { .roadmap { grid-template-columns: repeat(6, 1fr); } }
+  li { counter-increment: step; }
+  .state {
+    margin: 0;
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--color-muted);
+  }
+  [data-state='done'] .state { color: var(--color-accent); }
+  [data-state='active'] .state { color: var(--color-paper); }
+  h3 { margin: 0.5rem 0 0.5rem; font-size: 1.5rem; line-height: 1.15; }
+  h3::before {
+    content: counter(step, upper-roman) '. ';
+    font-style: normal;
+    color: var(--color-accent);
+  }
+  [data-state='planned'] h3 { color: var(--color-muted); }
+  .note { margin: 0; font-size: 0.9375rem; line-height: 1.6; color: var(--color-muted); }
+</style>

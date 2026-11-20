@@ -1,0 +1,8 @@
+[workspace]
+resolver = "2"
+members = ["engine/core", "players/baselines", "engine/bindings"]
+# AGPL-3.0 oracle adapter: built separately, never linked into our crates (docs/ORACLES.md).
+exclude = ["engine/oracles/yuiffy-adapter"]
+
+[profile.release]
+debug = 1

@@ -1,0 +1,46 @@
+{
+  "model": {
+    "entity_dim": 64,
+    "context_dim": 128,
+    "recurrent_dim": 64,
+    "message_passing_rounds": 2
+  },
+  "ppo": {
+    "gamma": 1.0,
+    "gae_lambda": 0.95,
+    "clip_epsilon": 0.2,
+    "learning_rate": 0.0003,
+    "entropy_coef": 0.01,
+    "epochs": 4,
+    "max_grad_norm": 0.5,
+    "target_kl": 0.03,
+    "sequence_events": 64,
+    "burn_in_events": 16,
+    "value_coef": 0.5
+  },
+  "league": {
+    "lineup_probabilities": [
+      0.5,
+      0.35,
+      0.15
+    ],
+    "max_snapshots": 8,
+    "snapshot_interval_updates": 1,
+    "holdout_update": 1
+  },
+  "eval": {
+    "interval_updates": 0
+  },
+  "runtime": {
+    "device": "cpu",
+    "torch_threads": 1,
+    "memory_budget_mib": 512,
+    "max_wall_time_seconds": null,
+    "budget_usd": null,
+    "checkpoint_margin_seconds": 30.0
+  },
+  "games_per_update": 2,
+  "concurrent_games": 2,
+  "updates": 2,
+  "master_seed": null
+}

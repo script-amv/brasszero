@@ -1,0 +1,20 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* Design tokens. Keep this list short: add a token only when a value
+   is reused by two or more components. */
+:root {
+  color-scheme: dark;
+
+  --color-ink: #15100c;    /* page background, text on light surfaces */
+  --color-paper: #efe6d6;  /* body text, light surfaces */
+  --color-muted: #b5a58e;  /* captions, secondary text */
+  --color-accent: #e8743b; /* kickers, numerals, key numbers */
+  --color-brass: #d9b66a;  /* figure outlines, links */
+  --color-rule: #3a2e22;   /* dividers */
+
+  --font-display: 'Cormorant Garamond Variable', Georgia, serif;
+  --font-body: 'Work Sans Variable', system-ui, sans-serif;
+
+  --measure: 36rem;                        /* readable line length */
+  --gutter: clamp(1rem, 4vw, 2.5rem);      /* page side padding */
+  --space: clamp(3.5rem, 8vw, 6rem);        /* vertical rhythm between sections */
+}

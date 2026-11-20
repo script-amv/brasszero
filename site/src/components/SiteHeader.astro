@@ -1,0 +1,44 @@
+---
+// SPDX-License-Identifier: Apache-2.0
+import { siteConfig } from '../site.config';
+interface Props { links?: { href: string; label: string; current?: boolean }[] }
+const {
+  links = [
+    { href: '#what-we-built', label: 'Method' },
+    { href: '#roadmap', label: 'Roadmap' },
+    { href: '/training', label: 'Training record' },
+    { href: '#support', label: 'Support' },
+  ],
+} = Astro.props;
+---
+<header class="site-header">
+  <div class="row">
+  <a class="wordmark" href="/">{siteConfig.name}</a>
+  <nav aria-label="Primary">
+    <ul>{links.map((l) => <li><a href={l.href} aria-current={l.current ? 'page' : undefined}>{l.label}</a></li>)}</ul>
+  </nav>
+  </div>
+</header>
+
+<style>
+  .site-header {
+    position: absolute;
+    inset: 0 0 auto;
+    z-index: 5;
+  }
+  .row {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem 2rem;
+    padding: 1.25rem var(--gutter);
+  }
+  a { color: var(--color-paper); text-decoration: none; }
+  a:hover, a[aria-current='page'] { color: var(--color-accent); }
+  .wordmark { font: 600 1.6rem/1 var(--font-display); }
+  ul { display: flex; flex-wrap: wrap; gap: 0.25rem 1.75rem; margin: 0; padding: 0; list-style: none; }
+  nav a { font: 600 0.95rem/2.75rem var(--font-display); letter-spacing: 0.22em; text-transform: uppercase; }
+  /* One page, short anchors: on phones the wordmark is enough. */
+  @media (max-width: 40rem) { nav { display: none; } }
+</style>

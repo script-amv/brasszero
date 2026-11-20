@@ -1,0 +1,44 @@
+---
+// SPDX-License-Identifier: Apache-2.0
+import { getCollection, getEntry, render } from 'astro:content';
+import BaseLayout from '../layouts/BaseLayout.astro';
+import SiteHeader from '../components/SiteHeader.astro';
+import SiteFooter from '../components/SiteFooter.astro';
+import Hero from '../components/Hero.astro';
+import Stats from '../components/Stats.astro';
+import Section from '../components/Section.astro';
+import { siteConfig } from '../site.config';
+
+const home = await getEntry('home', 'home');
+if (!home) throw new Error('src/content/home.md is missing');
+const { Content: Lede } = await render(home);
+
+const entries = (await getCollection('sections')).sort((a, b) => a.data.order - b.data.order);
+let figureIndex = 0;
+const sections = await Promise.all(
+  entries.map(async (entry) => {
+    const side: 'left' | 'right' = entry.data.figure && figureIndex++ % 2 === 1 ? 'right' : 'left';
+    const { Content } = await render(entry);
+    return { entry, side, Content };
+  }),
+);
+---
+<BaseLayout title={`${siteConfig.name}: ${home.data.title}`} description={siteConfig.description} ogImage={home.data.image}>
+  <SiteHeader slot="header" />
+  <Hero image={home.data.image} alt={home.data.imageAlt} kicker={home.data.kicker} title={home.data.title}>
+    <Lede />
+  </Hero>
+  <Stats label="Key facts" items={home.data.facts} status={home.data.status} />
+  {sections.map(({ entry, side, Content }, i) => (
+    <Fragment>
+    {i > 0 && <hr class="divider" />}
+    <Section id={entry.id} kicker={entry.data.kicker} title={entry.data.title} figure={entry.data.figure} side={side} milestones={entry.data.milestones}>
+      <Content />
+      {entry.id === 'support' && siteConfig.contactEmail && (
+        <p><a class="button" href={`mailto:${siteConfig.contactEmail}`}>Get in touch: {siteConfig.contactEmail}</a></p>
+      )}
+    </Section>
+    </Fragment>
+  ))}
+  <SiteFooter slot="footer" credits={home.data.credits} />
+</BaseLayout>
