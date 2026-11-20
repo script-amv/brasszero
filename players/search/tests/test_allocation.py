@@ -66,6 +66,7 @@ def test_four_seat_mapping_and_ties():
 
 def test_completed_search_invariant_under_candidate_permutation():
     from itertools import permutations
+    pytest.importorskip("torch", reason="full candidate-permutation search uses the optional inference runtime")
     from brass_search.inference import standard_gumbel
     scores = {'a': -.2, 'b': -2., 'c': -3., 'd': -5.}
     values = {'a': .0, 'b': .9, 'c': .3, 'd': .5}

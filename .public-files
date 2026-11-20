@@ -158,6 +158,7 @@ pyproject.toml
 replays/README.md
 replays/index.schema.json
 rust-toolchain.toml
+scripts/check_binding_audit.py
 scripts/check_public.py
 scripts/distributions.py
 scripts/release.py

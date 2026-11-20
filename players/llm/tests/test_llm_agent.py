@@ -490,7 +490,7 @@ def test_unreadable_usage_mapping_settles_turn_without_partial_usage():
                 raise RuntimeError("fixture-secret")
             return super().__getitem__(key)
 
-    receipts = iter([UnreadableUsage(prompt_tokens=8), {"completion_tokens": 3}])
+    receipts = iter([UnreadableUsage(prompt_tokens=8, completion_tokens=1), {"completion_tokens": 3}])
     agent = setup_agent(lambda req: answer(req, usage=next(receipts)))
     obs = position(agent)
     assert agent.act(obs) == 0

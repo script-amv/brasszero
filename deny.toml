@@ -1,4 +1,9 @@
 [advisories]
+# Source-locked exceptions. CI first checks the exact audited binding closure.
+ignore = [
+  { id = "RUSTSEC-2026-0176", reason = "The binding has no PyList/PyTuple iterator nth/nth_back call. Exact binding and dependency hashes are checked in CI." },
+  { id = "RUSTSEC-2026-0177", reason = "The binding registers static methods and a static pyfunction. It never constructs a PyCFunction from a Rust closure. CI pins the reviewed sources." },
+]
 [licenses]
 allow = ["Apache-2.0", "MIT", "Unicode-3.0", "BSD-2-Clause", "BSD-3-Clause", "ISC", "Zlib", "Apache-2.0 WITH LLVM-exception", "Unlicense", "MPL-2.0"]
 private = { ignore = true }
