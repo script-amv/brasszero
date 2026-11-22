@@ -14,10 +14,11 @@ import shutil
 import signal
 from statistics import mean, median
 import subprocess
+import tempfile
 import time
 
 from .bounded import GIB, MIB, disk_bytes
-from .experiments import writer_lock
+from .experiments import sync_dir, writer_lock
 from .learning_study import fixed, parent_identity, read, write
 
 
@@ -246,22 +247,59 @@ def check_files(directory, hashes):
 
 
 
-def check_publications(project, arm, updates, catalog):
-    count = 0
+def catalog_entries(inventory):
+    entries = {}
+    for section in ('models','other_preserved_snapshots'):
+        for row in inventory[section]:
+            if row['policy_id'] in entries:
+                raise ValueError('duplicate playable policy ID in catalog')
+            entries[row['policy_id']] = (section,row)
+    return entries
+
+
+def publication_identity(section, entry):
+    # Keep the pre-existing classification and original publication provenance.
+    return dict(section=section, **{k:entry.get(k) for k in
+                ('lineage','role','branch','source_export','provenance','path','files')})
+
+
+def check_publications(project, arm, updates, catalog, initial, experiments, *, partial=False):
+    count, issues = 0, []
     for number in updates:
-        export = arm/'policies'/('%06d'%number)
-        meta = read(export/'metadata.json')
-        entry = catalog[meta['id']]
-        files = entry['files']
-        if (meta['update'] != number or set(files) != {'metadata.json','policy.pt','manifest.json'}
-                or (entry['source_export'] == export.relative_to(project).as_posix()
-                    and entry.get('lineage') != 'experimental')):
-            raise ValueError('invalid experimental catalog publication: '+str(export))
-        public = project/entry['path']
-        check_files(export, files)
-        check_files(public, files)
-        count += 1
-    return count
+        try:
+            export = arm/'policies'/('%06d'%number)
+            meta = read(export/'metadata.json')
+            identity = meta['id']
+            section, entry = catalog[identity]
+            files = entry['files']
+            if meta['update'] != number or entry['update'] != number or set(files) != {'metadata.json','policy.pt','manifest.json'}:
+                raise ValueError('invalid catalog metadata: '+str(export))
+            if identity in initial:
+                if publication_identity(section,entry) != initial[identity]:
+                    raise ValueError('pre-existing policy publication changed')
+            else:
+                # Two arms can publish the same actor. Verify the original
+                # study arm's source export and experiment in that case.
+                branch = entry['branch']
+                if section != 'other_preserved_snapshots' or branch not in experiments:
+                    raise ValueError('new actor missing from experimental catalog section')
+                owner = arm.parent/branch
+                original = owner/'policies'/export.name
+                if (entry['lineage'] != 'experimental' or entry['role'] != branch
+                        or entry['source_export'] != original.relative_to(project).as_posix()
+                        or entry['provenance']['run'] != owner.relative_to(project).as_posix()
+                        or entry['provenance']['experiment_id'] != experiments[branch]):
+                    raise ValueError('study actor catalog provenance mismatch')
+                if original != export:
+                    check_files(original,files)
+            check_files(export,files)
+            check_files(project/entry['path'],files)
+            count += 1
+        except (OSError, KeyError, ValueError) as error:
+            if not partial:
+                raise
+            issues.append(dict(update=number,error=str(error)))
+    return count,issues
 
 
 def portable(path, identity=None):
@@ -339,6 +377,9 @@ def declare(out, project, pre):
     manifest = suite(protocol, SOURCE_ID)
     if manifest['deal_seeds'] != reg['evaluation_deal_seeds']:
         raise ValueError('final suite differs from registered deals')
+    protocol['initial_publications'] = {identity:publication_identity(section,row)
+        for identity,(section,row) in catalog_entries(catalog).items() if BASE < row['update'] <= BASE+EXTENDED//2}
+    protocol['packet'] = str(pre.parent)
     protocol['source_suite'] = manifest
     protocol['shared_baseline_bytes'] = {k:disk_bytes(Path(protocol[k])) for k in ('archive','models')}
     return protocol
@@ -414,8 +455,53 @@ def audit_training(out, protocol, state, arm, archive):
     return [r for entry in journal[1:] for r in entry['metrics']]
 
 
-def evaluate_endpoint(out, name, endpoint, protocol, archive, before, observed, completed):
+def evaluation_slot(directory, slot, manifest, endpoint, opponents):
     from brass_ai.replay_archive import labeled_seats
+    peers = {p['id']:p for p in opponents}
+    seats = [endpoint if spec == 'candidate' else None if spec == 'greedy' else peers[spec['id']]
+             for spec in slot['specs']]
+    labels = [p['id'] if p else 'greedy' for p in seats]
+    ids = [seat['bot'] for seat in labeled_seats(labels)]
+    updates = [p['update'] if p else None for p in seats]
+    lineage = dict(slot, suite_id=manifest['suite_id'], candidate_id=endpoint['id'], update=endpoint['update'],
+                   checkpoint_sha256=endpoint['files']['policy.pt'], labels=labels, seat_ids=ids, seat_updates=updates)
+    del lineage['specs']
+    origin = dict(category='evaluation', outcomes_only=True, mode='sample', experiment=manifest['suite_id'],
+                  run_experiment=endpoint['experiment_id'], experiment_path=str(directory), game=slot['game_id'],
+                  deal=slot['deal_id'], rotation=slot['rotation'], lineup=slot['lineup'], update=endpoint['update'],
+                  candidate_id=endpoint['id'], seat_ids=ids, seat_updates=updates)
+    return directory/'games'/('%08d.json' % slot['game_id']), lineage, origin
+
+
+def recover_evaluation(out, frozen, opponents, archive, can_verify, *, expected_suites=None):
+    """Reconcile completed archives before reporting a stop. Never play a game."""
+    from .combination_evaluation import outcome_id, outcome_row
+    def missing():
+        raise ValueError('completed evaluation archive disappeared during recovery')
+    pending = []
+    for name, endpoint in frozen.items():
+        directory = out/'evaluation'/name
+        if not directory.exists():
+            continue
+        manifest = read(directory/'suite.json')
+        if expected_suites is not None and manifest != expected_suites[name]:
+            raise ValueError('stored suite differs from frozen evaluation')
+        for slot in schedule(manifest):
+            path = directory/'games'/('%08d.json' % slot['game_id'])
+            if path.exists():
+                continue
+            path, lineage, origin = evaluation_slot(directory,slot,manifest,endpoint,opponents)
+            identity = outcome_id(lineage,origin)
+            if archive.path(identity).is_file():
+                if can_verify():
+                    outcome_row(archive,path,lineage,origin,(),slot['sampling'],missing)
+                else:
+                    pending.append(dict(model=name,lineup=slot['lineup'],deal_id=slot['deal_id'],
+                                        rotation=slot['rotation'],game_id=slot['game_id'],replay_id=identity))
+    return pending
+
+
+def evaluate_endpoint(out, name, endpoint, protocol, archive, before, observed, completed):
     from .combination_evaluation import outcome_row
     from .policy_io import load_policy
     directory = out/'evaluation'/name
@@ -434,18 +520,8 @@ def evaluate_endpoint(out, name, endpoint, protocol, archive, before, observed, 
         catalog[p['id']] = policy
     results = []
     for slot in schedule(manifest):
-        specs = slot.pop('specs')
-        policies = [None if s == 'greedy' else catalog[endpoint['id'] if s == 'candidate' else s['id']] for s in specs]
-        labels = [p[2].id if p else 'greedy' for p in policies]
-        ids = [seat['bot'] for seat in labeled_seats(labels)]
-        updates = [p[2].update if p else None for p in policies]
-        lineage = dict(slot, suite_id=manifest['suite_id'], candidate_id=endpoint['id'], update=endpoint['update'],
-                       checkpoint_sha256=endpoint['files']['policy.pt'], labels=labels, seat_ids=ids, seat_updates=updates)
-        origin = dict(category='evaluation', outcomes_only=True, mode='sample', experiment=manifest['suite_id'],
-                      run_experiment=endpoint['experiment_id'], experiment_path=str(directory), game=slot['game_id'],
-                      deal=slot['deal_id'], rotation=slot['rotation'], lineup=slot['lineup'], update=endpoint['update'],
-                      candidate_id=endpoint['id'], seat_ids=ids, seat_updates=updates)
-        path = directory/'games'/('%08d.json' % slot['game_id'])
+        path, lineage, origin = evaluation_slot(directory,slot,manifest,endpoint,protocol['opponents'])
+        policies = [None if label == 'greedy' else catalog[label] for label in lineage['labels']]
         observed(slot)
         row = outcome_row(archive, path, lineage, origin, policies, slot['sampling'], before)
         results.append(row)
@@ -461,16 +537,18 @@ def storage(out, protocol):
     shared = {key: max(0, disk_bytes(Path(protocol[key]))-base)
               for key, base in protocol['shared_baseline_bytes'].items()}
     used = disk_bytes(out)
-    return dict(study_tree_bytes=used, shared_growth_bytes=shared, used=used+sum(shared.values()),
+    packet = disk_bytes(Path(protocol['packet'])) if 'packet' in protocol else 0
+    return dict(study_tree_bytes=used, packet_bytes=packet, shared_growth_bytes=shared, used=used+packet+sum(shared.values()),
                 free=shutil.disk_usage(out).free)
 
 
 class Study:
-    def __init__(self, out, protocol, state):
+    def __init__(self, out, protocol, state, operator_stop=None):
         from brass_ai.replay_archive import Archive
         self.out, self.protocol, self.state = out, protocol, state
         self.deadline = datetime.fromisoformat(protocol['deadline_utc']).timestamp()
         self.archive = Archive(Path(protocol['archive']))
+        self.operator_stop = operator_stop
         self.signal = False
         self.rows = {arm: [] for arm in ARMS}
 
@@ -479,7 +557,7 @@ class Study:
         write(self.out/'progress.json', self.state)
 
     def guard(self, needed=0, growth=0):
-        if self.signal or (self.out/'STOP').exists():
+        if self.signal or (self.out/'STOP').exists() or (self.operator_stop and self.operator_stop.exists()):
             raise Halt('manual')
         usage = storage(self.out, self.protocol)
         self.state['disk'] = usage
@@ -592,26 +670,39 @@ class Study:
             if done != additional:
                 raise ValueError('trainer exceeded planned game range')
 
+    def publications(self, *, partial):
+        p = self.protocol
+        project = Path(p['project'])
+        try:
+            catalog = catalog_entries(read(project/'players/models/catalog.json'))
+        except (OSError, KeyError, ValueError) as error:
+            if not partial:
+                raise
+            issues = {arm:[dict(update=r['update'],error=str(error)) for r in self.rows[arm]] for arm in ARMS}
+            self.save(verified_actor_publications=dict.fromkeys(ARMS,0), actor_publication_issues=issues)
+            return
+        verified, issues = {}, {}
+        for arm in ARMS:
+            verified[arm], issues[arm] = check_publications(project,self.out/arm,
+                [r['update'] for r in self.rows[arm]],catalog,p['initial_publications'],self.state['experiment_ids'],
+                partial=partial)
+        self.save(verified_actor_publications=verified, actor_publication_issues=issues)
+
     def endpoints(self, endpoint):
         if self.state['committed_games'] != dict.fromkeys(ARMS, endpoint):
             raise ValueError('equal frozen endpoints required')
         identities = self.state['experiment_ids']
-        project = Path(self.protocol['project'])
-        inventory = read(project/'players/models/catalog.json')
-        catalog = {r['policy_id']:r for key in ('models','other_preserved_snapshots') for r in inventory[key]}
-        publications = {}
+        self.publications(partial=False)
         frozen = {'source': dict(self.protocol['source_actor'], experiment_id=self.protocol['parent']['experiment_id'])}
         for arm in ARMS:
             number = self.rows[arm][-1]['update']
             run = self.out/arm
-            publications[arm] = check_publications(project, run, [r['update'] for r in self.rows[arm]], catalog)
             identity = read(run/'updates'/('%06d'%number)/'metadata.json')['id']
             frozen[arm] = dict(portable(run/'policies'/('%06d'%number), identity), experiment_id=identities[arm])
         path = self.out/'frozen-policies.json'
         if (self.out/'evaluation').exists() and not path.exists():
             raise ValueError('missing endpoint declaration for existing evaluation')
         fixed(path, frozen)
-        self.save(verified_actor_publications=publications)
         return frozen
 
     def evaluate(self, frozen):
@@ -643,20 +734,31 @@ class Study:
     def finish(self, final, reason=None):
         p, s = self.protocol, self.state
         check_inputs(p)
-        coverage = evaluation_coverage(self.out, p['registration']['evaluation_lineups'])
+        if final is None:
+            self.publications(partial=True)
         disk = storage(self.out, p)
         frozen_file = self.out/'frozen-policies.json'
         frozen = read(frozen_file) if frozen_file.exists() else None
         for policy in (frozen or {}).values():
             check_files(Path(policy['path']), policy['files'])
+        pending = []
+        if final is None and frozen:
+            def can_verify():
+                available = storage(self.out,p)
+                return bound(self.deadline-time.time(),5,available['used'],available['free']) is None
+            expected = {k:suite(p,v['id']) for k,v in frozen.items()}
+            pending = recover_evaluation(self.out,frozen,p['opponents'],self.archive,can_verify,expected_suites=expected)
+        coverage = evaluation_coverage(self.out, p['registration']['evaluation_lineups'])
         evaluation_timings = {}
         for name in MODELS:
             durations = [read(path)['seconds'] for path in (self.out/'evaluation'/name/'games').glob('*.json')]
             observed = [duration for duration in durations if duration is not None]
-            evaluation_timings[name] = dict(known_games=len(observed), unknown_games=len(durations)-len(observed),
+            awaiting = sum(item['model'] == name for item in pending)
+            evaluation_timings[name] = dict(known_games=len(observed), unknown_games=len(durations)-len(observed)+awaiting,
                                             recorded_game_seconds=sum(observed))
         observed_deals = {int(d) for by_lineup in coverage.values() for group in by_lineup.values()
                           for d in [*group['complete_deals'], *group['partial_rotations']]}
+        all_deals = observed_deals | {row['deal_id'] for row in pending}
         report = dict(complete=final is not None, stop_reason=reason, phase=s['phase'], active_arm=s.get('active_arm'),
                       revision=p['revision'], protocol_sha256=s['protocol_sha256'], preregistration_sha256=REG_SHA,
                       source=p['parent'], frozen_policies=frozen, stability_protocol=p['stability_protocol'],
@@ -664,9 +766,12 @@ class Study:
                       base_game=FIRST, committed_games=s['committed_games'], native_verified_training=s['verified_games'],
                       training={arm:training_summary(self.rows[arm]) for arm in ARMS},
                       training_intervals=s['training_intervals'], extension_decision=s.get('extension_decision'),
-                      native_verified_evaluation=coverage, planned_games_per_model_per_lineup=64,
-                      planned_independent_deals=16, observed_independent_deals=len(observed_deals),
-                      verified_actor_publications=s.get('verified_actor_publications'), evaluation=final, deadline_utc=p['deadline_utc'],
+                      native_verified_evaluation=coverage, recorded_pending_native_verification=pending,
+                      planned_games_per_model_per_lineup=64,
+                      planned_independent_deals=16, observed_independent_deals=len(all_deals),
+                      native_verified_independent_deals=len(observed_deals),
+                      verified_actor_publications=s['verified_actor_publications'], actor_publication_issues=s['actor_publication_issues'],
+                      evaluation=final, deadline_utc=p['deadline_utc'],
                       elapsed_wall_seconds=time.time()-s['started_epoch'], disk=disk, training_repetitions=1,
                       interpretation='One training repetition tests the combined treatment. Effects of individual '
                       'components and general playing strength remain unresolved. Snapshot cadence is unchanged per '
@@ -678,7 +783,21 @@ class Study:
                   phase='complete' if final is not None else s['phase'], report_path=str(self.out/'report.json'))
 
 
-def execute(command, out, project, pre):
+def initialize_study(out, protocol):
+    # Publish both files in one directory rename before any arm can exist.
+    with tempfile.TemporaryDirectory(prefix='.stability-init-',dir=out.parent) as tmp:
+        stage = Path(tmp)/'study'
+        fixed(stage/'protocol.json', protocol)
+        state = dict(state='running', phase='initializing', active_arm=None, pid=os.getpid(), started_epoch=time.time(),
+                     protocol_sha256=sha(stage/'protocol.json'), experiment_ids={}, committed_games=dict.fromkeys(ARMS,0),
+                     verified_games=dict.fromkeys(ARMS,0), training_intervals={k:[] for k in ARMS}, extension_decision=None)
+        write(stage/'progress.json',state)
+        os.rename(stage,out)
+        sync_dir(out.parent)
+    return state
+
+
+def execute(command, out, project, pre, operator_stop=None):
     if out != project/'training/runs'/NAME:
         raise ValueError('study must use its dedicated project training/runs directory')
     archive = str(project/'replays')
@@ -712,16 +831,13 @@ def execute(command, out, project, pre):
             torch.set_num_interop_threads(1)
         if not resume:
             protocol = declare(out, project, pre)
-            fixed(out/'protocol.json', protocol)
-            state = dict(state='running', phase='initializing', active_arm=None, pid=os.getpid(), started_epoch=time.time(),
-                         protocol_sha256=sha(out/'protocol.json'), experiment_ids={}, committed_games=dict.fromkeys(ARMS,0),
-                         verified_games=dict.fromkeys(ARMS,0), training_intervals={k:[] for k in ARMS}, extension_decision=None)
-            write(out/'progress.json', state)
+            state = initialize_study(out,protocol)
         check_inputs(protocol)
         if resume:
             committed(out, state)
-            (out/'STOP').unlink(missing_ok=True)
-        study = Study(out, protocol, state)
+            if operator_stop is None:
+                (out/'STOP').unlink(missing_ok=True)
+        study = Study(out, protocol, state, operator_stop)
         study.save(state='running', pid=os.getpid(), reason=None)
         def request_stop(signum, frame):
             study.signal = True
@@ -748,6 +864,7 @@ def main(argv=None):
     parser.add_argument('command', choices=('run','status','stop','resume'))
     for option in ('project','out','preregistration'):
         parser.add_argument('--'+option, required=True, type=Path)
+    parser.add_argument('--operator-stop', type=Path, help='external stop marker owned by a serialized supervisor')
     args = parser.parse_args(argv)
     out, project, pre = (p.resolve() for p in (args.out, args.project, args.preregistration))
     if args.command in ('status','stop'):
@@ -756,7 +873,7 @@ def main(argv=None):
             (out/'STOP').touch()
             result['stop_requested'] = True
     else:
-        result = execute(args.command, out, project, pre)
+        result = execute(args.command, out, project, pre, args.operator_stop)
     print(json.dumps(result, sort_keys=True))
 
 

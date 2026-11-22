@@ -8,12 +8,7 @@ import time
 import brass
 from brass_ai.arena import play_game
 from brass_ai.replay_archive import Archive, digest, engine_id, labeled_seats, recording_context, recording_metadata
-from .agent import TorchAgent
-from .artifacts import capture_rng_states, restore_rng_states
-from .evaluate import EvalReport, cluster_summary
 from .learning_study import fixed, read, write
-from .policy_io import load_policy
-from .replay import select_replays
 from .seeding import SeedStreams
 from .transfer import validate_replay
 
@@ -21,16 +16,21 @@ from .transfer import validate_replay
 def _play_seat(policy, seed):
     if policy is None:
         return brass.GreedyBot(seed)
+    from .agent import TorchAgent
     model, components, metadata = policy
     agent = TorchAgent(model, components, seed, mode='sample')
     agent.replay_identity = metadata.id
     return agent
 
 
+def outcome_id(lineage, origin):
+    return digest({'suite': lineage['suite_id'], 'origin': origin['run_experiment'],
+                   'game': lineage['game_id'], 'policies': lineage['seat_ids']})
+
+
 def outcome_row(archive, path, lineage, origin, policies, sampling, before_game):
     seats = labeled_seats(lineage['labels'])
-    replay_id = digest({'suite': lineage['suite_id'], 'origin': origin['run_experiment'],
-                        'game': lineage['game_id'], 'policies': lineage['seat_ids']})
+    replay_id = outcome_id(lineage, origin)
     saved = read(path) if path.exists() else None
     report_path = path.parent.parent/'report.json'
     if saved is None and report_path.exists():
@@ -70,6 +70,10 @@ def outcome_row(archive, path, lineage, origin, policies, sampling, before_game)
 
 def evaluate(candidate, suite, out, *, before_game=None):
     """Use loaded policy metadata and one immutable native outcome per game."""
+    from .artifacts import capture_rng_states, restore_rng_states
+    from .evaluate import EvalReport, cluster_summary
+    from .policy_io import load_policy
+    from .replay import select_replays
     if suite.stream != 'dev' or not suite.outcomes_only or suite.replay_limit:
         raise ValueError('expected an outcomes-only development suite with durable native recordings')
     rng = capture_rng_states()

@@ -274,7 +274,9 @@ def update_candidate(actor, actor_adam, critic, critic_adam, episodes, cfg, rng)
         full_checks = full_visits = 0
         last_full_kl = 0.
         final_metrics = None
+        eligible_fragments = sum(f.eligible > 0 for f in fragments)
         for epoch in range(cfg.epochs):
+            epoch_start = actor_fragments
             if epoch:
                 rng.shuffle(fragments)
             for group in distinct_groups(fragments):
@@ -297,11 +299,12 @@ def update_candidate(actor, actor_adam, critic, critic_adam, episodes, cfg, rng)
             # Fresh zero-state histories include every eligible decision. A probe
             # stop inside an epoch still needs the final global diagnostic.
             final_metrics = _final_actor(actor, episodes, timelines, targets, cfg)[0]
+            if actor_fragments-epoch_start == eligible_fragments:
+                full_checks += 1
+                full_visits += final_metrics['final_policy_decisions']
+                last_full_kl = final_metrics['final_kl']
             if stop_reason == 'representative_kl':
                 break
-            full_checks += 1
-            full_visits += final_metrics['final_policy_decisions']
-            last_full_kl = final_metrics['final_kl']
             if last_full_kl > cfg.target_kl:
                 stop_reason = 'full_epoch_kl'
                 break

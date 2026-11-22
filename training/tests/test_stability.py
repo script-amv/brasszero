@@ -145,15 +145,17 @@ def test_decision_weighted_actor_and_critic_gradients(tiny):
                                       64, 16, random.Random(0)))
         decisions = batch.decisions
         if i == 0:
-            # Three synthetic rows reuse one legal two-choice observation.
+            # Two eligible moves plus one forced singleton share this fragment.
             d = decisions[0]
-            decisions = tuple(replace(d, ply=j) for j in (1, 2, 3))
+            forced = singleton_episode(actor, components).decisions[0]
+            decisions = (d, replace(d, ply=2, observation=forced.observation, index=0,
+                                    old_log_prob=0.), replace(d, ply=3))
             batch = replace(batch, main_events=(batch.main_events[0],)+(batch.main_events[1],)*3,
                             end_ply=4, decisions=decisions, decision_positions=(1, 2, 3),
-                            targets=batch.targets*3)
+                            targets=(batch.targets[0], replace(batch.targets[0], policy_mask=False), batch.targets[0]))
         batch = replace(batch, targets=tuple(replace(t, self_advantage=(1., -2.)[i]) for t in batch.targets))
         prepared = _prepare_sequence(batch, components)
-        batches.append(Fragment(batch, prepared, batch.recorded_start_state, len(decisions)))
+        batches.append(Fragment(batch, prepared, batch.recorded_start_state, sum(t.policy_mask for t in batch.targets)))
     critic = deepcopy(actor)
     cfg = replace(BC, max_grad_norm=1e6)
     for model, group_fn, objective in ((actor, actor_group, 'actor'), (critic, critic_group, 'critic')):
@@ -161,7 +163,8 @@ def test_decision_weighted_actor_and_critic_gradients(tiny):
         for f in batches:
             _, terms = _loss(reference, f.batch, components, cfg, f.prepared)
             loss = terms.policy-cfg.entropy_coef*terms.entropy if objective == 'actor' else cfg.value_coef*terms.value
-            (loss * (len(f.batch.decisions)/4)).backward()
+            weight = f.eligible/3 if objective == 'actor' else len(f.batch.decisions)/4
+            (loss * weight).backward()
         opt = torch.optim.Adam(model.parameters(), lr=.001)
         captured = {}
         original = opt.step
@@ -334,4 +337,22 @@ def test_full_epoch_guard_catches_drift_outside_fixed_sample(tiny):
     assert result['actor_stop_reason'] == 'full_epoch_kl' and result['kl_stopped']
     assert result['actor_steps'] == 4 and result['critic_steps'] == 16
     assert result['full_epoch_kl_checks'] == 1 and result['full_epoch_policy_decision_visits'] == 16
+    assert result['last_full_epoch_kl'] == result['final_kl']
+
+
+def test_probe_stop_on_final_group_counts_completed_full_epoch(tiny):
+    from brass_rl.stability import update_candidate
+    actor, components = tiny
+    episodes = eight(actor, components)[:4]
+    critic = deepcopy(actor)
+    class Jump(torch.optim.Adam):
+        def step(self):
+            super().step()
+            with torch.no_grad():
+                actor.candidate_score[-1].weight.mul_(10000)
+    result = update_candidate(actor, Jump(actor.parameters(),lr=.0003), critic, torch.optim.Adam(critic.parameters()),
+                              episodes, BC, random.Random(9))
+    assert result['actor_stop_reason'] == 'representative_kl' and result['actor_steps'] == 1
+    assert result['full_epoch_kl_checks'] == 1
+    assert result['full_epoch_policy_decision_visits'] == result['final_policy_decisions'] == 4
     assert result['last_full_epoch_kl'] == result['final_kl']

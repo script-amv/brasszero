@@ -265,7 +265,8 @@ def test_lost_arm_identity_cannot_be_adopted_during_training(tmp_path):
 def test_endpoint_requires_each_intermediate_actor_copy_to_match_catalog(tmp_path):
     from brass_rl.stability_study import check_publications
     arm = tmp_path/'training/runs/study/control'
-    entries = {}
+    entries = {'models':[], 'other_preserved_snapshots':[]}
+    ids = {'control':'exp-study-control'}
     for update in (4056,4057):
         run_export = arm/'policies'/f'{update:06d}'
         playable = tmp_path/'players/models'/str(update)
@@ -273,10 +274,98 @@ def test_endpoint_requires_each_intermediate_actor_copy_to_match_catalog(tmp_pat
             dump(path/'metadata.json', {'id':str(update),'update':update})
             (path/'policy.pt').write_bytes(str(update).encode())
             dump(path/'manifest.json', {'content_hashes':{k:sha(path/k) for k in ('policy.pt','metadata.json')}})
-        entries[str(update)] = dict(path=playable.relative_to(tmp_path).as_posix(), lineage='experimental',
-                                    source_export=run_export.relative_to(tmp_path).as_posix(),
-                                    files={k:sha(playable/k) for k in ('policy.pt','manifest.json','metadata.json')})
-    assert check_publications(tmp_path,arm,[4056,4057],entries) == 2
+        entries['other_preserved_snapshots'].append(dict(policy_id=str(update),update=update,
+            path=playable.relative_to(tmp_path).as_posix(), lineage='experimental',role='control', branch='control',
+            provenance={'run':arm.relative_to(tmp_path).as_posix(),'experiment_id':ids['control']},
+            source_export=run_export.relative_to(tmp_path).as_posix(),
+            files={k:sha(playable/k) for k in ('policy.pt','manifest.json','metadata.json')}))
+    def audit(initial=None, partial=False):
+        from brass_rl.stability_study import catalog_entries
+        return check_publications(tmp_path,arm,[4056,4057],catalog_entries(entries),initial or {},ids,partial=partial)
+    assert audit() == (2,[])
+    first = entries['other_preserved_snapshots'].pop(0)
+    entries['models'].append(first)
+    with pytest.raises(ValueError):
+        audit()
+    checked, pending = audit(partial=True)
+    assert checked == 1 and [item['update'] for item in pending] == [4056]
+    # Existing identical IDs keep their legitimate original catalog sections and roles.
+    from brass_rl.stability_study import publication_identity
+    previous = {'4056':publication_identity('models',first)}
+    assert audit(previous) == (2,[])
+    entries['models'].clear()
+    entries['other_preserved_snapshots'].append(first)
+    first['source_export'] = 'other/run'
+    with pytest.raises(ValueError):
+        audit()
+    first['source_export'] = (arm/'policies/004056').relative_to(tmp_path).as_posix()
     (tmp_path/'players/models/4056/policy.pt').write_bytes(b'other')
     with pytest.raises(ValueError):
-        check_publications(tmp_path,arm,[4056,4057],entries)
+        audit()
+
+
+def test_interrupted_initial_declaration_never_creates_unresumable_study(tmp_path, monkeypatch):
+    import brass_rl.stability_study as module
+    out = tmp_path/'study'
+    original = module.write
+    def interrupt(path,value):
+        if path.name == 'progress.json':
+            raise KeyboardInterrupt
+        original(path,value)
+    with monkeypatch.context() as patch:
+        patch.setattr(module,'write',interrupt)
+        with pytest.raises(KeyboardInterrupt):
+            module.initialize_study(out, {'id':'sealed'})
+    assert not out.exists()
+    state = module.initialize_study(out,{'id':'sealed'})
+    assert state['protocol_sha256'] == sha(out/'protocol.json')
+    assert state == json.loads((out/'progress.json').read_bytes())
+
+
+def test_orphan_evaluation_recovers_or_counts_native_verification_pending(tmp_path, monkeypatch):
+    import brass
+    from brass_ai.arena import play_game
+    from brass_ai.replay_archive import Archive, recording_context
+    from brass_rl.stability_study import evaluation_slot, schedule
+    from brass_rl.combination_evaluation import outcome_id
+    archive = Archive(tmp_path/'archive')
+    (tmp_path/'policy.pt').write_bytes(b'act')
+    endpoint = dict(id='greedy',path=str(tmp_path),files={'policy.pt':sha(tmp_path/'policy.pt')}, update=4060,experiment_id='exp-test')
+    suite = dict(suite_id='suite-test', master_seed=12,deal_seeds=[1234],lineups={'greedy':['candidate']+['greedy']*3})
+    directory = tmp_path/'evaluation/source'
+    dump(directory/'suite.json',suite)
+    slot = next(schedule(suite))
+    path,lineage,origin = evaluation_slot(directory,slot,suite,endpoint,[])
+    replay_id = outcome_id(lineage,origin)
+    with recording_context(**origin):
+        play_game([brass.GreedyBot(s) for s in slot['sampling']],1234, labels=['greedy']*4,archive=archive,game_id=replay_id)
+    # Crash just after native archive publication. Then the runner is halted
+    # before normal evaluation starts. Sealing the partial report must discover
+    # this game even if the disk/time budget prevents creating its verified row.
+    import brass_rl.stability_study as study
+    from datetime import datetime, timezone
+    monkeypatch.setattr(study,'check_inputs',lambda p:None)
+    monkeypatch.setattr(study,'suite',lambda p,identity:suite)
+    dump(tmp_path/'players/models/catalog.json', {'models':[],'other_preserved_snapshots':[]})
+    dump(tmp_path/'frozen-policies.json', {'source':endpoint})
+    zero = dict(control=0,candidate=0)
+    protocol = dict(deadline_utc='2100-01-01T00:00:00+00:00',archive=str(tmp_path/'archive'), project=str(tmp_path),
+                    revision='r', parent={}, initial_publications={},shared_baseline_bytes={},opponents=[],
+                    stability_protocol='brass-ppo-stability/2',registration={'evaluation_lineups':['greedy']})
+    state = dict(phase='evaluation',started_epoch=0, committed_games=zero,verified_games=zero,
+                 experiment_ids={},training_intervals={},protocol_sha256='x')
+    runner = study.Study(tmp_path,protocol,state)
+    runner.deadline = 0
+    runner.finish(None,'time')
+    report = json.loads((tmp_path/'report.json').read_bytes())
+    assert [x['replay_id'] for x in report['recorded_pending_native_verification']] == [replay_id]
+    assert report['native_verified_evaluation']['source']['greedy']['games']==0 and not path.exists()
+    assert report['observed_independent_deals']==1 and report['native_verified_independent_deals']==0
+    assert report['evaluation_timing']['source']['unknown_games']==1
+    runner.deadline = datetime(2100,1,1,tzinfo=timezone.utc).timestamp()
+    runner.finish(None,'manual')
+    report = json.loads((tmp_path/'report.json').read_bytes())
+    assert report['recorded_pending_native_verification']==[]
+    assert report['native_verified_evaluation']['source']['greedy']['games']==1
+    saved = json.loads(path.read_bytes())
+    assert saved['replay_id']==replay_id and saved['seconds'] is None and len(archive.records())==1
