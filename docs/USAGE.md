@@ -35,3 +35,23 @@ For an explicitly authorized stability study, `brass_rl.stability_run.fork_stabi
 The candidate starts its critic as a separate copy of the source model with a fresh Adam. Its value estimates and recurrent boundaries come from replaying each viewer's public events from zero under the frozen critic. Its fixed actor advantages use own-seat GAE on those estimates. Each actor Adam step combines up to four recurrent fragments from distinct games, weighting the policy and entropy terms by eligible decisions. The critic independently trains for four epochs on the observer-relative terminal score vector, weighting fragments by all value decisions. Candidate `optimizer.pt` contains both Adam states and the critic weights at each resumable boundary. The portable actor export retains the legacy value head for format compatibility. Its values do not represent the independently trained critic.
 
 Each update's `metrics.json` records `actor_steps`, `critic_steps`, decision visits, `kl_checks`, `monitor_policy_decisions` and `actor_stop_reason`. The control records its shared Adam steps in both step counts. The candidate checks `monitor_kl` against .03 after every actor step on a fixed fragment from every game, spreading the selection across temporal regions. This estimate uses the recorded actor boundary plus burn-in. Both arms report `final_kl` and `final_clip_fraction` on all eligible decisions using full public histories replayed under the final actor. The final metric can exceed the guard threshold. `critic_mse_before` and `critic_mse_after` measure four-component errors on the same training games.
+
+### Local matched PPO stability study
+
+The pre-registered overnight study uses a dedicated directory under the data project's `training/runs`. From the reviewed source checkout, use the local single-process Mac compute guard for `run` and `resume`. The command runs in the foreground. Set `PROJECT` to the data project that contains the original 4055 checkpoint, the sealed registration packet, replay archive, and playable-model catalog.
+
+```sh
+out="$PROJECT/training/runs/ppo-stability-20261122"
+pre="$PROJECT/lab/research/ppo-stability-20261122/preregistration.json"
+export BRASS_REPLAY_ROOT="$PROJECT/replays" PYTHONPATH="$PWD/engine/tools:$PWD/training"
+training/.venv/bin/python -m brass_rl.stability_study run --project "$PROJECT" --out "$out" --preregistration "$pre"
+python3 -m brass_rl.stability_study status --project "$PROJECT" --out "$out" --preregistration "$pre"
+python3 -m brass_rl.stability_study stop --project "$PROJECT" --out "$out" --preregistration "$pre"
+training/.venv/bin/python -m brass_rl.stability_study resume --project "$PROJECT" --out "$out" --preregistration "$pre"
+```
+
+`protocol.json` binds the source revision, embedded checkpoint configuration, deadline, opponents, and final deals. `progress.json` tracks the active arm and phase. Status reads numeric checkpoint boundaries, including work committed since the last progress write. Stop requests take effect after the current update or evaluation game. Explicit resume clears the stop request and continues from committed work. Use the same checkout revision on resume.
+
+Control and candidate advance in matched blocks of eight games. Only after both reach 128 games does the runner seal its resource-based choice in `endpoint-decision.json`. An extension to 256 requires time for both arms plus a 90-minute evaluation reserve. Budget checks allow 4 GiB of new data, keep at least 2 GiB free, and reserve a further 64 MiB for atomic writes. Ordinary training publication registers new actors in the experimental catalog and retains their action recordings in the project archive.
+
+At equal endpoints the final suite rotates each policy through all four seats on 16 pre-registered deals against three Greedy players and against fixed updates 688, 738 and 793. Evaluation rows under `evaluation/` link to native-verified recordings. `report.json` records exact coverage on a graceful stop. A complete report includes optimizer work, full-collection KL and clipping, critic training error, and paired whole-deal intervals for all three policy comparisons. The two lineups share the same 16 independent deals and one training repetition.

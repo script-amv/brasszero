@@ -270,7 +270,10 @@ def update_candidate(actor, actor_adam, critic, critic_adam, episodes, cfg, rng)
         monitor_count = sum(f.eligible for f in sample)
         kl = clip = policy = entropy = actor_norm = 0.
         actor_steps = policy_visits = actor_fragments = actor_four = 0
-        stopped = False
+        stop_reason = 'epochs_complete'
+        full_checks = full_visits = 0
+        last_full_kl = 0.
+        final_metrics = None
         for epoch in range(cfg.epochs):
             if epoch:
                 rng.shuffle(fragments)
@@ -289,9 +292,18 @@ def update_candidate(actor, actor_adam, critic, critic_adam, episodes, cfg, rng)
                 actor_four += visited == 4
                 kl, clip, _, _ = _monitor(actor, sample, components, cfg)
                 if kl > cfg.target_kl:
-                    stopped = True
+                    stop_reason = 'representative_kl'
                     break
-            if stopped:
+            # Fresh zero-state histories include every eligible decision. A probe
+            # stop inside an epoch still needs the final global diagnostic.
+            final_metrics = _final_actor(actor, episodes, timelines, targets, cfg)[0]
+            if stop_reason == 'representative_kl':
+                break
+            full_checks += 1
+            full_visits += final_metrics['final_policy_decisions']
+            last_full_kl = final_metrics['final_kl']
+            if last_full_kl > cfg.target_kl:
+                stop_reason = 'full_epoch_kl'
                 break
         critic_steps = value_visits = critic_fragments = critic_four = 0
         value = calibration = critic_norm = 0.
@@ -307,7 +319,6 @@ def update_candidate(actor, actor_adam, critic, critic_adam, episodes, cfg, rng)
                 critic_steps += 1
                 critic_fragments += len(group)
                 critic_four += len(group) == 4
-        final_metrics, _ = _final_actor(actor, episodes, timelines, targets, cfg)
         fitted = [critic_rollout(critic, ep, components, timelines[ep.game_id]) for ep in episodes]
         policy /= max(1, policy_visits)
         entropy /= max(1, policy_visits)
@@ -317,9 +328,10 @@ def update_candidate(actor, actor_adam, critic, critic_adam, episodes, cfg, rng)
                     approx_kl=kl, clip_fraction=clip, calibration=calibration/max(1, value_visits),
                     gradient_norm=actor_norm/max(1, actor_steps), critic_gradient_norm=critic_norm/max(1, critic_steps),
                     max_reconstructed_logp_error=error, optimizer_steps=actor_steps, actor_steps=actor_steps,
-                    critic_steps=critic_steps, kl_stopped=stopped, kl_checks=actor_steps, kl_check_interval_actor_steps=1,
+                    critic_steps=critic_steps, kl_stopped=stop_reason != 'epochs_complete', kl_checks=actor_steps, kl_check_interval_actor_steps=1,
                     monitor_kl=kl, monitor_clip_fraction=clip,
-                    actor_stop_reason='representative_kl' if stopped else 'epochs_complete',
+                    actor_stop_reason=stop_reason, full_epoch_kl_checks=full_checks,
+                    full_epoch_policy_decision_visits=full_visits, last_full_epoch_kl=last_full_kl,
                     monitor_games=len(sample), monitor_sequences=len(sample), monitor_policy_decisions=monitor_count,
                     monitor_policy_decision_visits=monitor_count*actor_steps,
                     policy_decisions=unique_eligible, value_decisions=len(targets),

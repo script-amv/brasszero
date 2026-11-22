@@ -358,3 +358,18 @@ def test_scalar_forward_admits_live_boards_and_all_retained_rows_before_allocati
     assert required - _workspace(pending, 1, 1, model) >= _board_workspace(model)
     count, _ = _forward_plan(pending, _MemoryBudget(required - 1), model)
     assert 1 <= count < 4 and len(pending) == 4
+
+
+def test_stability_resolves_captured_recorder_ids_without_archive_scan(setup, monkeypatch):
+    from brass_ai.replay_archive import Archive, recording_context
+    import brass_rl.train as trainer
+    model, _, _, streams, config = setup
+    with recording_context(category='training', experiment='fixture', update=7):
+        episodes = collect_batch(model, league_for(setup,(1,0,0)), streams, 0, 1, 1, config)
+    archive = Archive()
+    record = archive.read(episodes[0].replay_id)
+    assert record['status'] == 'completed' and record['provenance']['game'] == episodes[0].game_id
+    monkeypatch.setattr(archive, 'records', lambda: pytest.fail('captured IDs require no historical archive scan'))
+    assert trainer.update_recordings(archive, episodes, 7, 'fixture', 'fixture', 'candidate') == [record]
+    with pytest.raises(ValueError):
+        trainer.update_recordings(archive, episodes, 8, 'fixture', 'fixture', 'candidate')

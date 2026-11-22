@@ -293,3 +293,45 @@ def test_critic_failure_rolls_back_both_networks_adams_and_rng(tiny):
     assert_nested_equal(global_rng, capture_rng_states())
     assert shuffle == rng.getstate()
     assert all(p.grad is None for m in (model, critic) for p in m.parameters())
+
+
+def test_full_epoch_guard_catches_drift_outside_fixed_sample(tiny):
+    from brass_rl.stability import update_candidate
+    actor, components = tiny
+    weight = actor.candidate_score[-1].weight
+    original = weight.detach().clone()
+    with torch.no_grad():
+        weight.zero_()
+        for p in actor.event_gru.parameters():
+            p.zero_()  # Identical logit shift at both temporal positions.
+    template = toy_episodes(actor, components)[0]
+    episodes = []
+    for game in range(8):
+        d = template.decisions[0]
+        # Probe samples the early fragment in the first four games and the late
+        # fragment in the other four. Those eight moves select action zero.
+        decisions = tuple(replace(d, game_id=game, ply=ply, index=int(ply != int(game >= 4))) for ply in (0,1))
+        episodes.append(replace(template, game_id=game, decisions=decisions))
+    critic = deepcopy(actor)
+    obs = encode_observation(template.decisions[0].observation, components)
+    with torch.no_grad():
+        weight.copy_(original)
+        logits = actor([obs], actor.initial_memory(1, actor.device)).logits
+        shifted = original*(np.log(5/3)/(logits[0]-logits[1]).item())
+        weight.zero_()
+
+    class ShiftActor(torch.optim.Adam):
+        def step(self):
+            with torch.no_grad():
+                weight.copy_(shifted)
+
+    cfg = replace(BC, sequence_events=1, burn_in_events=0)
+    result = update_candidate(actor, ShiftActor(actor.parameters()), critic, torch.optim.Adam(critic.parameters()),
+                              episodes, cfg, random.Random(13))
+    assert result['monitor_kl'] == pytest.approx(.25-np.log(1.25), abs=1e-5)
+    assert result['final_kl'] == pytest.approx(-.5*np.log(1.25*.75), abs=1e-5)
+    assert result['monitor_kl'] < .03 < result['final_kl']
+    assert result['actor_stop_reason'] == 'full_epoch_kl' and result['kl_stopped']
+    assert result['actor_steps'] == 4 and result['critic_steps'] == 16
+    assert result['full_epoch_kl_checks'] == 1 and result['full_epoch_policy_decision_visits'] == 16
+    assert result['last_full_epoch_kl'] == result['final_kl']

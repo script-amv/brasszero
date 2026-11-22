@@ -7,7 +7,7 @@ Memory limits are conservative allocation estimates, not process RSS limits.
 """
 from copy import deepcopy
 from dataclasses import dataclass, fields
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import brass
 import numpy as np
@@ -51,6 +51,7 @@ class Episode:
     decisions: Tuple[Decision, ...]
     lineup: Lineup
     result: GameResult
+    replay_id: Optional[str] = None
 
 
 class CollectionMemoryError(RuntimeError):
@@ -162,9 +163,10 @@ class _Pending:
 
 
 class _Game:
-    def __init__(self, game_id, lineup, agents, referee, initial, budget, state_bytes, overhead):
+    def __init__(self, game_id, lineup, agents, referee, initial, budget, state_bytes, overhead, replay_id):
         self.game_id, self.lineup, self.agents, self.referee = game_id, lineup, agents, referee
         self.initial = initial
+        self.replay_id = replay_id
         self.events, self.decisions = [], []
         self.boundaries = {s:[a.memory_snapshot()] for s,a in enumerate(agents) if lineup.entries[s].trainable}
         self.state_bytes, self.overhead = state_bytes, overhead
@@ -186,7 +188,7 @@ class _Game:
     def finish(self, budget):
         episode = Episode(self.game_id,self.initial,tuple(self.events),
                           {s:tuple(states) for s,states in self.boundaries.items()},
-                          tuple(self.decisions),self.lineup,self.referee.result())
+                          tuple(self.decisions),self.lineup,self.referee.result(),self.replay_id)
         budget.release(self.overhead)
         return episode
 
@@ -283,7 +285,7 @@ def collect_batch(model, league: League, streams: SeedStreams, start_game_id: in
                             provenance=dict(metadata, game=game_id))
         referee = RefereeGame(streams.seed("train.deal",game_id),agents,labels, recorder=recorder)
         initial = next(a.latest_public_json for a in agents if isinstance(a,TorchAgent))
-        game = _Game(game_id,lineup,tuple(agents),referee,initial,budget,state_bytes,overhead)
+        game = _Game(game_id,lineup,tuple(agents),referee,initial,budget,state_bytes,overhead,recorder.game_id)
         launched += 1
         return game
 

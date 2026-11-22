@@ -33,3 +33,7 @@ Continuing only the existing algorithm would not test the authorized changes. Se
 ## Verification
 
 Use failing-then-passing targeted tests for distinct-game grouping/decision weights, common-sample KL detection and stopping, actor/critic parameter isolation, critic continuation after actor stop, four-seat target ordering, old checkpoint loading, full experiment save/resume equality, interrupted-update rollback including all optimizers/RNG, compact independent forks, paired deal schedule, and runner stop/disk/time limits. Run appropriate complete existing suites and `make test lint check-public` before claiming completion. Archive scientific source revision and leave main/GUI sessions intact. No push.
+
+## Pre-training guard refinement
+
+A disposable eight-game QA update finished four actor epochs with fixed-sample KL 0.02899 and full-collection KL 0.04022 against the registered threshold of 0.03. No scientific training or evaluation had begun. Protocol `brass-ppo-stability/2` keeps the fixed cross-game check after each actor step and also replays every eligible decision chronologically under current actor weights at each completed actor epoch. A full-epoch KL above 0.03 ends the actor update. The independent critic still completes all four epochs. Record per-step probe work, full-epoch check counts and decision visits, last full-epoch KL, stopping reason, and final full-collection KL and clipping. The optimizer tensor layout, registered deals, endpoint budget and control objective are unchanged.

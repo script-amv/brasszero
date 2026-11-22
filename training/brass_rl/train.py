@@ -158,6 +158,29 @@ def _manifests(episodes, streams, notes):
     return {'train': games, 'dev': [], 'final': [], 'rng_restore_notes': list(notes)}
 
 
+
+def update_recordings(archive, episodes, update, experiment, run_experiment, stability_arm):
+    """Resolve the actual collector recordings without loading historical games."""
+    if stability_arm and any(ep.replay_id is not None for ep in episodes):
+        records = []
+        for ep in episodes:
+            if ep.replay_id is None:
+                raise ValueError('missing captured stability replay ID')
+            record = archive.read(ep.replay_id)
+            info = record['provenance']
+            if (record['game_id'] != ep.replay_id or record['category'] != 'training'
+                    or record['status'] != 'completed' or info.get('experiment') != experiment
+                    or info.get('update') != update or info.get('game') != ep.game_id
+                    or record['result']['vp'] != list(ep.result.vp)
+                    or record['result']['ranking'] != list(ep.result.ranking)):
+                raise ValueError('captured stability recording disagrees with its collected game')
+            records.append(record)
+        return records
+    # Legacy callers and synthetic collectors without recorders use the old lookup.
+    return [r for r in archive.records() if r['provenance'].get('update') == update and
+            (r['provenance'].get('experiment') == experiment or r['provenance'].get('run_experiment') == run_experiment)]
+
+
 def _game_result_line(game, experiment_id, model_update, saved_update):
     """Operator-only results: native places and the policy that actually played."""
     ranking = game['outcome']['ranking']
@@ -365,9 +388,7 @@ def _train(config: TrainConfig, run_dir: Path, resume: Optional[Path] = None,
             from brass_ai.replay_archive import Archive
             manifests['experiment_id'] = experiment['id']
             replay_experiment = experiment.get('legacy_replay_identity',experiment['id'])
-            recordings = [r for r in Archive().records() if r['provenance'].get('update') == update and
-                          (r['provenance'].get('experiment') == replay_experiment or
-                           r['provenance'].get('run_experiment') == experiment['id'])]
+            recordings = update_recordings(Archive(), episodes, update, replay_experiment, experiment['id'], stability_arm)
             recorded_games = [r['provenance'].get('game') for r in recordings if r['category']=='training']
             if (len(set(recorded_games))!=len(recorded_games) or
                     not set(recorded_games)<={ep.game_id for ep in episodes}):

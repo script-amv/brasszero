@@ -17,7 +17,7 @@ from .retention import ROLLING_POLICY
 from .train import _train, publish_policies
 
 
-PROTOCOL = 'brass-ppo-stability/1'
+PROTOCOL = 'brass-ppo-stability/2'
 
 
 def _verify_source(state):
@@ -96,7 +96,8 @@ def fork_stability(source: Path, dest: Path, candidate: bool) -> Path:
                             config_overrides={'games_per_update': {'from': 2, 'to': 8}} if candidate else {},
                             actor_sequences_per_step=4 if candidate else 1, critic_initialization=(
                                 'exact source clone, independent public memory, fresh Adam' if candidate else 'shared source'),
-                            kl_monitor='fixed across-game sample after each actor step' if candidate else 'legacy minibatch')
+                            kl_monitor=('fixed across-game sample after each actor step; full chronological KL after each actor epoch'
+                                        if candidate else 'legacy minibatch'))
                 atomic(staging/'experiment.json', encoded(meta))
                 export_policy(path, staging/'policies'/path.name)
                 sync_dir(staging)

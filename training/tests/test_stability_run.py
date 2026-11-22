@@ -151,3 +151,16 @@ def test_malformed_candidate_never_resumes_or_alters_rng(coordinator, tmp_path, 
     with pytest.raises(ArtifactError):
         load_update(path)
     assert_nested_equal(capture_rng_states(), before)
+
+
+def test_v1_qa_checkpoint_cannot_resume_under_new_guard(coordinator, tmp_path):
+    from brass_rl.stability_run import fork_stability, train_stability
+    source = source_checkpoint(coordinator, tmp_path)
+    arm = tmp_path/'arm'
+    fork_stability(source, arm, True)
+    path = arm/'experiment.json'
+    exp = json.loads(path.read_bytes())
+    exp['stability_protocol'] = 'brass-ppo-stability/1'
+    path.write_text(json.dumps(exp))
+    with pytest.raises(ValueError, match='stability'):
+        train_stability(arm, 0)
