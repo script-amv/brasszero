@@ -84,6 +84,8 @@ class LoadedUpdate:
     state: RunState
     path: Path
     rng_restore_notes: Tuple[str, ...] = ()
+    critic_state: Optional[Mapping[str, Any]] = None
+    critic_optimizer_state: Optional[Mapping[str, Any]] = None
 
 
 def capture_rng_states():
@@ -239,6 +241,8 @@ def _controller(state, records, rng):
             "next_game_id": state.next_game_id, "completed_updates": state.completed_updates,
             "snapshots": records, "development_best_id": state.development_best_id,
             "league_history": dict(state.league_history), "rng_states": rng}
+    if "stability_arm" in state.manifests:
+        controller["stability_arm"] = state.manifests["stability_arm"]
     if state.dynamic_league is not None:
         controller["dynamic_league"] = dict(state.dynamic_league)
     return controller
@@ -334,7 +338,8 @@ def _validate_optimizer(model, optimizer_state, learning_rate):
         raise ArtifactError("invalid Adam optimizer state") from exc
 
 
-def save_update(run_dir: Path, model, optimizer, state: RunState, *, inherited_policy=None) -> Path:
+def save_update(run_dir: Path, model, optimizer, state: RunState, *, inherited_policy=None,
+                critic=None, critic_optimizer=None, inherit_source_rng=False) -> Path:
     """Commit one complete boundary, preserving every caller RNG stream.
 
     Single writer only. Repeating an identical boundary is idempotent; an existing
@@ -353,6 +358,17 @@ def save_update(run_dir: Path, model, optimizer, state: RunState, *, inherited_p
                 [id(p) for p in model.parameters()]):
             raise ArtifactError("optimizer requires one parameter group in canonical model order")
         _validate_optimizer(model, optimizer.state_dict(), state.config.ppo.learning_rate)
+        arm = state.manifests.get("stability_arm")
+        if arm == "candidate":
+            from .stability_checkpoint import pack
+            optimizer_payload = pack(model, optimizer, critic, critic_optimizer, state.config.ppo.learning_rate)
+        elif arm in (None, "control") and critic is None and critic_optimizer is None:
+            optimizer_payload = optimizer.state_dict()
+        else:
+            raise ArtifactError("incompatible stability arm/critic checkpoint")
+        checkpoint_rng = rng
+        if inherit_source_rng and inherited_policy is None:
+            raise ArtifactError("inheriting RNG requires an explicit source checkpoint")
         run_dir = Path(run_dir).resolve()
         updates = run_dir / "updates"
         updates.mkdir(parents=True, exist_ok=True)
@@ -370,14 +386,17 @@ def save_update(run_dir: Path, model, optimizer, state: RunState, *, inherited_p
                 raise ArtifactError("inherited public policy differs from fork state")
             weights, metadata_bytes = payload["policy.pt"], payload["metadata.json"]
             metadata = json.loads(metadata_bytes)
+            if inherit_source_rng:
+                source_controller = torch.load(io.BytesIO(payload["controller.pt"]), map_location="cpu", weights_only=False)
+                checkpoint_rng = source_controller["rng_states"]
         if state.development_best_id is not None and state.development_best_id != metadata["id"]:
             candidates = _committed(run_dir)
             _development_best(candidates, state.development_best_id)
         _verify_league(state)
         records = store_snapshot_records(run_dir, state, model)
-        controller = _controller(state, records, rng)
+        controller = _controller(state, records, checkpoint_rng)
         data = {"policy.pt": weights, "metadata.json": metadata_bytes,
-                "controller.pt": _serialize(controller), "optimizer.pt": _serialize(optimizer.state_dict()),
+                "controller.pt": _serialize(controller), "optimizer.pt": _serialize(optimizer_payload),
                 "metrics.json": json_bytes({"records": state.metrics}), "manifests.json": json_bytes(dict(state.manifests)),
                 "versions.json": json_bytes({"python": platform.python_version(), "torch": str(torch.__version__),
                                               "numpy": np.__version__, "system": platform.system(), "source": source_provenance()})}
@@ -441,6 +460,10 @@ def _checkpoint_state(path, manifest, payload, model, metadata, config):
                      metrics=tuple(read_json(path / "metrics.json")["records"]),
                      manifests=read_json(path / "manifests.json"), league_history=controller["league_history"],
                      rng_states=controller["rng_states"], dynamic_league=controller.get("dynamic_league"))
+    arm = state.manifests.get("stability_arm")
+    if (controller.get("stability_arm") != arm or arm not in (None, "control", "candidate")
+            or ("stability_arm" in controller) != ("stability_arm" in state.manifests)):
+        raise ArtifactError("stability arm differs between controller and committed manifest")
     _verify_league(state)
     if state.development_best_id is not None:
         _development_best(reversed(_committed(path.parent.parent)), state.development_best_id)
@@ -477,6 +500,12 @@ def load_update(path: Path, device: str = "cpu", config: Optional[TrainConfig] =
         state, saved_config = _checkpoint_state(path, manifest, payload, model, metadata, config)
         optimizer_state = torch.load(io.BytesIO(payload["optimizer.pt"]), map_location=device, weights_only=False)
         model.to(device).train().requires_grad_(True)
+        critic = critic_adam = None
+        if state.manifests.get("stability_arm") == "candidate":
+            from .stability_checkpoint import unpack
+            optimizer_state, critic, critic_adam = unpack(model, optimizer_state, state.config.ppo.learning_rate)
+        elif "format" in optimizer_state:
+            raise ArtifactError("unexpected versioned optimizer outside candidate stability checkpoint")
         # Validate optimizer shape/load semantics before restoring any RNG.
         _validate_optimizer(model, optimizer_state, state.config.ppo.learning_rate)
         notes = restore_rng_states(state.rng_states, device=device)
@@ -489,7 +518,7 @@ def load_update(path: Path, device: str = "cpu", config: Optional[TrainConfig] =
         if saved_config.runtime.device != torch.device(device).type:
             notes += ("Training device changed from %s to %s; continuation is not exact."
                       % (saved_config.runtime.device, torch.device(device).type),)
-        return LoadedUpdate(model, optimizer_state, state, path, notes)
+        return LoadedUpdate(model, optimizer_state, state, path, notes, critic, critic_adam)
     except Exception as exc:
         restore_rng_states(before)
         if isinstance(exc, ArtifactError):

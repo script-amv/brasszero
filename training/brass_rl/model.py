@@ -181,6 +181,18 @@ class BrassPolicy(nn.Module):
             memory = self.event_gru(inputs, memory)
         return memory
 
+    def _observation_context(self, obs, memory):
+        public, entities = self._entities(obs)
+        hand = self._tensor(obs.hand) @ self.card_ids.weight
+        history = memory if self.config.use_history else torch.zeros_like(memory)
+        return self.context(torch.cat((public, hand, history))), entities
+
+    def values_only(self, observations: Sequence[EncodedObservation], memory: Tensor) -> Tensor:
+        """Use the same four relative value predictions without legal-action scoring."""
+        self._memory(memory, len(observations))
+        return torch.stack([self.value_head(self._observation_context(obs, memory[i])[0]).sigmoid()
+                            for i, obs in enumerate(observations)])
+
     def forward(self, observations: Sequence[EncodedObservation], memory: Tensor,
                 candidate_chunk: int = 1024) -> PolicyOutput:
         if type(candidate_chunk) is not int or candidate_chunk < 1:
@@ -195,10 +207,7 @@ class BrassPolicy(nn.Module):
             n = len(obs.candidates.features)
             if n == 0:
                 raise ValueError("decision needs at least one candidate")
-            public, entities = self._entities(obs)
-            hand = self._tensor(obs.hand) @ self.card_ids.weight
-            history = memory[row] if self.config.use_history else torch.zeros_like(memory[row])
-            context = self.context(torch.cat((public, hand, history)))
+            context, entities = self._observation_context(obs, memory[row])
             values.append(self.value_head(context).sigmoid())
             for start in range(0, n, candidate_chunk):
                 end = min(n, start + candidate_chunk)

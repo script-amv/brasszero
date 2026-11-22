@@ -261,6 +261,9 @@ training/brass_rl/search_evaluate.py
 training/brass_rl/seeding.py
 training/brass_rl/sequences.py
 training/brass_rl/source.py
+training/brass_rl/stability.py
+training/brass_rl/stability_checkpoint.py
+training/brass_rl/stability_run.py
 training/brass_rl/train.py
 training/brass_rl/transfer.py
 training/brass_rl/transport_coverage.py
@@ -325,6 +328,8 @@ training/tests/test_search_evaluate.py
 training/tests/test_search_recovery.py
 training/tests/test_sequences.py
 training/tests/test_source.py
+training/tests/test_stability.py
+training/tests/test_stability_run.py
 training/tests/test_train.py
 training/tests/test_transfer.py
 training/tests/test_transfer_legacy_bench.py

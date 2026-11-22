@@ -146,7 +146,7 @@ def _prepare_sequence(batch: SequenceBatch, components) -> _PreparedSequence:
 
 
 @fixed_boards()
-def _sequence_stats(model, batch: SequenceBatch, components, prepared=None) -> PolicyStats:
+def _sequence_stats(model, batch: SequenceBatch, components, prepared=None, *, values_only=False):
     memory = batch.recorded_start_state.to(device=model.device).detach()
     previous = batch.previous_public_json
     with torch.no_grad():
@@ -170,6 +170,8 @@ def _sequence_stats(model, batch: SequenceBatch, components, prepared=None) -> P
                    else prepared.main_events[k-batch.start_ply])
         memory = model.update_memory([encoded], memory)
         previous = event.public_json
+    if values_only:
+        return model.values_only(observations, torch.cat(memories, dim=0))
     output = model(observations, torch.cat(memories, dim=0))
     return policy_stats(output, torch.tensor(choices, dtype=torch.int64, device=model.device))
 
@@ -218,7 +220,7 @@ def _rng_restore(rng, state):
         rng.set_state(value)
 
 
-def update_policy(model, optimizer, episodes, config: PPOConfig, rng) -> UpdateMetrics:
+def update_policy(model, optimizer, episodes, config: PPOConfig, rng, *, work=None) -> UpdateMetrics:
     """Update current weights; optimizer belongs to the caller, never rollouts.
 
     Every recorded logp (singletons included) is checked before the first step.
@@ -313,6 +315,11 @@ def update_policy(model, optimizer, episodes, config: PPOConfig, rng) -> UpdateM
         metrics['gradient_norm'] = sums['gradient_norm']/max(1, steps)
         metrics['total'] = metrics['policy']+config.value_coef*metrics['value']-config.entropy_coef*metrics['entropy']
         optimizer.zero_grad(set_to_none=True)
+        if work is not None:
+            work.update(actor_policy_visits=policy_visits, critic_value_visits=value_visits,
+                        monitor_policy_decision_visits=policy_visits, monitor_policy_decisions=eligible if steps else 0,
+                        monitor_kl=post.approx_kl.item() if steps else 0.,
+                        monitor_clip_fraction=post.clip_fraction.item() if steps else 0.)
         return UpdateMetrics(**metrics, optimizer_steps=steps, kl_stopped=stopped,
                              max_reconstructed_logp_error=max_error, value_decisions=len(targets),
                              policy_decisions=sum(t.policy_mask for t in targets.values()))

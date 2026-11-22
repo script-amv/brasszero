@@ -184,7 +184,7 @@ def _state(config, master, shuffle, game_id, update, league, metrics=(), manifes
 
 def _train(config: TrainConfig, run_dir: Path, resume: Optional[Path] = None,
           max_updates: Optional[int] = None, *, stop_requested: Optional[Callable[[], bool]] = None,
-          dynamic_members=None) -> TrainReport:
+          dynamic_members=None, stability_arm=None) -> TrainReport:
     """Train to an absolute update ceiling without changing the stored config.
 
     Wall time is a cooperative cutoff: reserve checkpoint_margin_seconds and the
@@ -209,6 +209,7 @@ def _train(config: TrainConfig, run_dir: Path, resume: Optional[Path] = None,
     shuffle = random.Random(0)  # Private stream; restored after all construction.
     stop = stop_requested if stop_requested is not None else StopFlag()
     notes = ()
+    critic = critic_optimizer = None
     run_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='.snapshots-', dir=str(run_dir)) as raw_dir:
         raw_dir = Path(raw_dir)
@@ -239,6 +240,14 @@ def _train(config: TrainConfig, run_dir: Path, resume: Optional[Path] = None,
             if loaded.state.completed_updates != journal[-1]['update']:
                 raise ValueError('resume requires the latest committed boundary; historical continuation would overwrite updates')
             state, model, latest = loaded.state, loaded.model, loaded.path
+            if state.manifests.get('stability_arm') != stability_arm:
+                raise ValueError('stability checkpoints require the matching train_stability arm')
+            if stability_arm == 'candidate':
+                from copy import deepcopy
+                critic = deepcopy(model)
+                critic.load_state_dict(loaded.critic_state)
+                critic_optimizer = torch.optim.Adam(critic.parameters(), lr=config.ppo.learning_rate)
+                critic_optimizer.load_state_dict(loaded.critic_optimizer_state)
             optimizer = torch.optim.Adam(model.parameters(), lr=config.ppo.learning_rate)
             optimizer.load_state_dict(loaded.optimizer_state)
             streams = SeedStreams(state.master_seed)
@@ -249,6 +258,8 @@ def _train(config: TrainConfig, run_dir: Path, resume: Optional[Path] = None,
             for note in notes:
                 warnings.warn(note, RuntimeWarning)
         experiment = ensure_experiment(run_dir, config, state=state)
+        if experiment.get('stability_arm') != stability_arm:
+            raise ValueError('stability experiment declaration differs from resume mode')
         from .main_bc import DESTINATION, source_parent
         project = project_for(run_dir)
         canonical = (project is not None and run_dir == project/DESTINATION and
@@ -310,12 +321,18 @@ def _train(config: TrainConfig, run_dir: Path, resume: Optional[Path] = None,
             if frozen_ids != frozen_identities.keys():
                 raise ValueError('collected frozen replay snapshot is missing from the verified league')
             ppo_started = time.monotonic()
-            metrics = update_policy(model, optimizer, episodes, config.ppo, shuffle)
+            if stability_arm == 'candidate':
+                from .stability import update_candidate
+                metrics_data = update_candidate(model, optimizer, critic, critic_optimizer, episodes, config.ppo, shuffle)
+            elif stability_arm == 'control':
+                from .stability import update_control
+                metrics_data = update_control(model, optimizer, episodes, config.ppo, shuffle)
+            else:
+                metrics_data = asdict(update_policy(model, optimizer, episodes, config.ppo, shuffle))
             timings = {'collection': collection_seconds, 'ppo': time.monotonic() - ppo_started}
             if not all(math.isfinite(value) and value >= 0 for value in timings.values()):
                 raise ValueError('collection/PPO timings must be finite and nonnegative; update was not published')
-            metrics_data = asdict(metrics)
-            if not all(math.isfinite(value) for value in metrics_data.values()):
+            if not all(math.isfinite(value) for key, value in metrics_data.items() if key != 'actor_stop_reason'):
                 raise ValueError('PPO metrics must be finite; update was not published')
             update = state.completed_updates + 1
             if isinstance(league, DynamicLeague):
@@ -332,6 +349,8 @@ def _train(config: TrainConfig, run_dir: Path, resume: Optional[Path] = None,
             elif update % config.league.snapshot_interval_updates == 0:
                 league.add(_snapshot(model, raw_dir, update, 'training'))
             manifests = _manifests(episodes, streams, notes)
+            if stability_arm is not None:
+                manifests['stability_arm'] = stability_arm
             record = {'update': update, 'first_game_id': state.next_game_id,
                       'next_game_id': state.next_game_id+len(episodes), 'games': len(episodes),
                       'ppo': metrics_data, 'timings_seconds': timings, 'pool_ids': [s.id for s in league.snapshots],
@@ -356,7 +375,10 @@ def _train(config: TrainConfig, run_dir: Path, resume: Optional[Path] = None,
             manifests['replay_ids'] = [r['game_id'] for r in recordings]
             state = _state(config, state.master_seed, shuffle, state.next_game_id+len(episodes), update,
                            league, (record,), manifests, best)
-            latest = save_update(run_dir, model, optimizer, state)
+            if stability_arm == 'candidate':
+                latest = save_update(run_dir, model, optimizer, state, critic=critic, critic_optimizer=critic_optimizer)
+            else:
+                latest = save_update(run_dir, model, optimizer, state)
             for game in manifests['train']:
                 try:
                     print(_game_result_line(game, experiment['id'], update-1, update), flush=True)
