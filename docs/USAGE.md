@@ -15,3 +15,13 @@ BRASS_REPLAY_ROOT="$recordings" training/.venv/bin/python -m brass_rl arena --ag
 ```
 
 The command registers the exact export and rotates the model through four seats on one seeded deal. Use `python -m brass_rl eval --help` for an immutable evaluation suite. Use `pack`, `verify` and `import` for experiment transport. Restoring optimizer state requires a trusted complete checkpoint and explicit training authorization. The maintenance guide covers site preview, publishing, datasets and releases.
+
+Training prints one flushed `GAME` line per newly committed training game. Each line identifies the experiment, stable game number, model update that played, saved update, all four players, VP, native places and the sole winner. For example:
+
+```text
+GAME run=exp-example game=3836 model_update=1918 saved_update=1919 | P1=AI:62VP/#1 P2=Frozen(training-001890):59VP/#2 P3=Greedy:29VP/#4 P4=Random:41VP/#3 | winner=P1
+```
+
+Seats and places start at 1. `AI` marks each trainable seat; self-play displays all four. Frozen opponents retain their snapshot IDs. Places include native tiebreakers. A tied first place is reported as `winner=none(tie:P1,P2)`. `model_update` is the version that made the decisions; `saved_update` is the checkpoint after learning from the batch. Lines are printed after the full checkpoint commits, so a two-game batch produces two lines together. Resume prints only newly committed games and keeps their stable IDs. A failed console write does not stop the training loop.
+
+On Mac, lines appear in the training terminal. To retain them, append `2>&1 | tee -a training.log` to the existing training command in Bash or Zsh with `set -o pipefail`; another terminal can use `tail -f training.log`. The checkpoint manifests and replay archive remain the authoritative records if console output is interrupted.

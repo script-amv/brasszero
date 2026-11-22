@@ -96,6 +96,66 @@ def rows(path):
     return [json.loads(line) for line in (path / 'metrics.jsonl').read_text().splitlines()]
 
 
+def test_game_lines_report_played_version_and_only_new_committed_games(coordinator, tmp_path, capsys):
+    run = tmp_path/'run'
+    first = coordinator.train(tiny_config(), run, max_updates=1)
+    lines = [line for line in capsys.readouterr().out.splitlines() if line.startswith('GAME ')]
+    assert len(lines) == 2
+    for game, line in enumerate(lines):
+        assert 'game=%d ' % game in line
+        assert 'model_update=0 saved_update=1' in line
+        assert 'P1=AI:4VP/#1' in line if game == 0 else 'P1=AI:4VP/#2' in line
+        assert 'P4=AI:1VP/#4' in line
+        assert 'winner=P1' in line if game == 0 else 'winner=P2' in line
+        assert json.loads((run/'experiment.json').read_text())['id'] in line
+    coordinator.train(tiny_config(), run, resume=first.latest_checkpoint, max_updates=2)
+    resumed = [line for line in capsys.readouterr().out.splitlines() if line.startswith('GAME ')]
+    assert len(resumed) == 2
+    assert all('model_update=1 saved_update=2' in line for line in resumed)
+    assert 'game=2 ' in resumed[0] and 'game=3 ' in resumed[1]
+
+
+@pytest.mark.parametrize('ranking,winner', [((1, 0, 2, 3), 'P2'), ((0, 0, 2, 3), 'none(tie:P1,P2)')])
+def test_game_line_uses_native_tiebreaks_and_labels_opponents(coordinator, ranking, winner):
+    game = {'game_id': 10, 'lineup': [
+        {'kind': 'current', 'snapshot_id': None},
+        {'kind': 'frozen', 'snapshot_id': 'training-000840'},
+        {'kind': 'greedy', 'snapshot_id': None},
+        {'kind': 'random', 'snapshot_id': None}],
+        'outcome': {'vp': [50, 50, 40, 30], 'ranking': ranking}}
+    line = coordinator._game_result_line(game, 'exp-example', 843, 844)
+    assert 'P1=AI:50VP/#%d' % (ranking[0]+1) in line
+    assert 'P2=Frozen(training-000840):50VP/#1' in line
+    assert 'P3=Greedy:40VP/#3' in line
+    assert 'P4=Random:30VP/#4' in line
+    assert line.endswith('winner='+winner)
+
+
+def test_failed_checkpoint_does_not_print_committed_game_lines(coordinator, monkeypatch, tmp_path, capsys):
+    original = coordinator.save_update
+    def fail(run, model, optimizer, state):
+        if state.completed_updates == 1:
+            raise OSError('injected save failure')
+        return original(run, model, optimizer, state)
+    monkeypatch.setattr(coordinator, 'save_update', fail)
+    with pytest.raises(OSError, match='injected save failure'):
+        coordinator.train(tiny_config(), tmp_path/'run', max_updates=1)
+    assert not any(line.startswith('GAME ') for line in capsys.readouterr().out.splitlines())
+
+
+def test_closed_game_log_pipe_does_not_stop_checkpointing(coordinator, monkeypatch, tmp_path):
+    import builtins
+    original = builtins.print
+    def closed_pipe(*args, **kwargs):
+        if args and isinstance(args[0], str) and args[0].startswith('GAME '):
+            raise BrokenPipeError('viewer closed')
+        return original(*args, **kwargs)
+    monkeypatch.setattr(builtins, 'print', closed_pipe)
+    result = coordinator.train(tiny_config(), tmp_path/'run', max_updates=1)
+    assert result.completed_updates == 1
+    assert load_update(result.latest_checkpoint).state.next_game_id == 2
+
+
 def test_train_two_updates_and_resume_matches_uninterrupted(coordinator, tmp_path):
     config = tiny_config()
     full = coordinator.train(config, tmp_path / 'full')

@@ -158,6 +158,22 @@ def _manifests(episodes, streams, notes):
     return {'train': games, 'dev': [], 'final': [], 'rng_restore_notes': list(notes)}
 
 
+def _game_result_line(game, experiment_id, model_update, saved_update):
+    """Operator-only results: native places and the policy that actually played."""
+    ranking = game['outcome']['ranking']
+    players = []
+    for seat, (entry, vp, rank) in enumerate(zip(game['lineup'], game['outcome']['vp'], ranking), 1):
+        if entry['kind'] == 'frozen':
+            label = 'Frozen(%s)' % entry['snapshot_id']
+        else:
+            label = 'AI' if entry['kind'] == 'current' else entry['kind'].title()
+        players.append('P%d=%s:%dVP/#%d' % (seat, label, vp, rank+1))
+    winners = ['P%d' % (seat+1) for seat, rank in enumerate(ranking) if rank == 0]
+    winner = winners[0] if len(winners) == 1 else 'none(tie:%s)' % ','.join(winners)
+    return ('GAME run=%s game=%d model_update=%d saved_update=%d | %s | winner=%s' %
+            (experiment_id, game['game_id'], model_update, saved_update, ' '.join(players), winner))
+
+
 def _state(config, master, shuffle, game_id, update, league, metrics=(), manifests=None, best=None):
     return RunState(config=config, master_seed=master, controller_rng_states={'shuffle': shuffle.getstate()},
                     next_game_id=game_id, completed_updates=update, league_snapshots=league.snapshots,
@@ -341,6 +357,12 @@ def _train(config: TrainConfig, run_dir: Path, resume: Optional[Path] = None,
             state = _state(config, state.master_seed, shuffle, state.next_game_id+len(episodes), update,
                            league, (record,), manifests, best)
             latest = save_update(run_dir, model, optimizer, state)
+            for game in manifests['train']:
+                try:
+                    print(_game_result_line(game, experiment['id'], update-1, update), flush=True)
+                except OSError:
+                    # A closed viewer or failed console must not interrupt learning.
+                    pass
             league = _stored_league(league, run_dir)
             for raw_path in raw_dir.iterdir():
                 raw_path.unlink()
