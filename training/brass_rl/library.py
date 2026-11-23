@@ -13,8 +13,8 @@ from .transfer import _policy, experiments_under, file_hash, read
 
 
 def register_publication(project, run, exports, *, include_evaluation=False):
-    """Register newly committed exports under the caller's run writer lock."""
-    with inventory_writer(project) as inventory:
+    """Register newly committed exports, reusing the training writer when called during a run."""
+    with writer_lock(run, reuse=True), inventory_writer(project) as inventory:
         experiment = inventory.register(run)
         for source in exports:
             inventory.publish(source, run=run, experiment=experiment, checkpoint=run/'updates'/source.name)

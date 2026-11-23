@@ -8,7 +8,7 @@ from pathlib import Path
 import os
 import tempfile
 
-from .experiments import atomic, encoded, library_intent, link_or_copy, read_experiment, sync_dir
+from .experiments import atomic, encoded, holds_writer_lock, library_intent, link_or_copy, read_experiment, sync_dir
 from .transfer import _policy, digest, file_hash, read
 
 SECTIONS = ('models', 'other_preserved_snapshots', 'unavailable_preserved_snapshots')
@@ -88,6 +88,7 @@ class Inventory:
         self.added = 0
         self.locations_by_policy = None
         self.checkpoints = {}
+        self.verified_checkpoints = {}
         for policy, occurrences in registry['occurrences'].items():
             for occurrence in occurrences:
                 self.checkpoints[occurrence['branch_id'], occurrence['update']] = occurrence
@@ -147,6 +148,8 @@ class Inventory:
             sha = file_hash(checkpoint/'manifest.json')
         if experiment:
             self.record(experiment, update, identity, sha)
+            if sha and not preflight and holds_writer_lock(run):
+                self.verified_checkpoints[experiment['id'], update] = sha
         if preflight:
             return
         prior = self.rows.get(identity)
@@ -258,9 +261,14 @@ class Inventory:
         """Advance after discovery so neither directory ordering nor duplicate weight IDs break ties."""
         candidates = self.continuation_candidates()
         while len(candidates) == 1:
-            self.accept(candidates[0])
+            candidate = candidates[0]
+            key = candidate['experiment_id'], candidate['update']
+            if self.verified_checkpoints.get(key) != candidate['checkpoint_sha256']:
+                break
+            self.accept(candidate)
             candidates = self.continuation_candidates()
-        unresolved = [_ref(o['experiment_id'], o['update'], o['policy_id'], o['checkpoint_sha256']) for o in candidates]
+        unresolved = ([_ref(o['experiment_id'], o['update'], o['policy_id'], o['checkpoint_sha256'])
+                       for o in candidates] if len(candidates) > 1 else [])
         self.registry['ambiguous_continuations'] = unresolved
         return unresolved
 

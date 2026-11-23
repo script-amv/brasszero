@@ -15,9 +15,11 @@ from pathlib import Path
 import platform
 import shutil
 import tempfile
+from threading import local
 import uuid
 
 FORMAT = 'brass-experiment/1'
+_RUN_WRITERS = local()
 
 
 def encoded(value):
@@ -50,18 +52,31 @@ def sync_tree(root):
         sync_dir(Path(parent))
 
 
+def holds_writer_lock(run):
+    return (os.getpid(), Path(run).resolve()) in getattr(_RUN_WRITERS, 'held', ())
+
+
 @contextmanager
-def writer_lock(run):
+def writer_lock(run, *, reuse=False):
     run = Path(run).resolve()
+    key = (os.getpid(), run)
+    if not hasattr(_RUN_WRITERS, 'held'):
+        _RUN_WRITERS.held = set()
+    held = _RUN_WRITERS.held
+    if reuse and key in held:
+        yield
+        return
     run.parent.mkdir(parents=True, exist_ok=True)
     with (run.parent/('.'+run.name+'.writer.lock')).open('a+b') as stream:
         try:
             fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
             raise ValueError('experiment is active; stop its writer before transfer/resume') from exc
+        held.add(key)
         try:
             yield
         finally:
+            held.remove(key)
             fcntl.flock(stream, fcntl.LOCK_UN)
 
 

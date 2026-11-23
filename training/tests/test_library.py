@@ -401,6 +401,9 @@ def test_review_reconciliation_follows_only_unique_continuations(coordinator, tm
         assert registry['mainline_tip'] == start
         assert {o['experiment_id'] for o in report['ambiguous_continuations']} == {
             read(a/'experiment.json')['id'], read(b/'experiment.json')['id']}
+        # Refreshing just one known competitor cannot elect it over its sibling.
+        assert reconcile_library(project, runs=[a])['ambiguous_continuations'] == report['ambiguous_continuations']
+        assert read(models/'lineage.json')['mainline_tip'] == start
     else:
         assert registry['mainline_tip']['experiment_id'] == read(b/'experiment.json')['id']
         assert registry['mainline_tip']['update'] == 2
@@ -445,3 +448,61 @@ def test_review_evaluation_exemplar_requires_matching_evidence(coordinator, tmp_
         if mismatch:
             record = Archive(tmp_path/'replays').records()[0]
             assert record['provenance'].get('candidate_id') is None
+
+
+@pytest.mark.parametrize('state,operation', [
+    ('run-offline', 'empty-reconcile'),
+    ('damaged-checkpoint', 'unrelated-publication'),
+    ('policy-only', 'selected-reconcile'),
+])
+def test_automatic_acceptance_requires_current_verified_checkpoint(coordinator, tmp_path, state, operation):
+    from brass_rl.library import adopt_mainline, reconcile_library
+    run = tmp_path/'training/runs/accepted'
+    tip2 = coordinator.train(tiny_config(), run, max_updates=2).latest_checkpoint
+    policy2 = read(tip2/'metadata.json')['id']
+    selected = adopt_mainline(tmp_path, run/'updates/000001', expected_tip=None)['mainline_tip']
+    assert selected['update'] == 1
+    lineage = tmp_path/'players/models/lineage.json'
+    backup = tmp_path/'offline'
+    if state == 'run-offline':
+        run.rename(backup)
+    elif state == 'policy-only':
+        tip2.rename(backup)
+    else:
+        payload = tip2/'controller.pt'
+        payload.rename(backup)
+        payload.write_bytes(b'invalid checkpoint payload')
+    if operation == 'empty-reconcile':
+        reconcile_library(tmp_path, runs=[])
+    elif operation == 'unrelated-publication':
+        coordinator.train(tiny_config(), run.parent/'other', max_updates=0)
+    else:
+        reconcile_library(tmp_path, runs=[run])
+    registry = read(lineage)
+    assert registry['mainline_tip'] == selected
+    assert registry['occurrences'][policy2][0]['lineage'] == 'experimental'
+    if state == 'run-offline':
+        backup.rename(run)
+    elif state == 'policy-only':
+        backup.rename(tip2)
+    else:
+        with pytest.raises(ValueError, match='hash'):
+            reconcile_library(tmp_path, runs=[run])
+        assert read(lineage)['mainline_tip'] == selected
+        backup.replace(payload)
+    reconcile_library(tmp_path, runs=[run])
+    assert read(lineage)['mainline_tip']['policy_id'] == policy2
+
+
+def test_manual_publication_respects_another_run_writer(coordinator, tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from brass_rl.experiments import writer_lock
+    from brass_rl.library import adopt_mainline, register_publication
+    run = tmp_path/'training/runs/trial'
+    coordinator.train(tiny_config(), run, max_updates=2)
+    tip = adopt_mainline(tmp_path, run/'updates/000001', expected_tip=None)['mainline_tip']
+    with writer_lock(run), ThreadPoolExecutor(max_workers=1) as worker:
+        call = worker.submit(register_publication, tmp_path, run, [run/'policies/000002'])
+        with pytest.raises(ValueError, match='active'):
+            call.result()
+    assert read(tmp_path/'players/models/lineage.json')['mainline_tip'] == tip
