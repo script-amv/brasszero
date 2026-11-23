@@ -62,7 +62,7 @@ def seed(project, output):
         write(output.with_suffix('.json'), summary)
 
 
-def seed_bc(source, output):
+def seed_bc(source, output, *, max_wall_time_seconds=None):
     """Seal a new supported BC child from an explicitly selected full boundary."""
     import torch
     from brass_rl.bc_current import fork_bc
@@ -77,7 +77,7 @@ def seed_bc(source, output):
         torch.set_num_threads(1)
         with tempfile.TemporaryDirectory() as temp:
             state = Path(temp)/'state'
-            fork_bc(source, state/'run')
+            fork_bc(source, state/'run', max_wall_time_seconds=max_wall_time_seconds)
             summary = verify(state)
             summary['sha256'] = seal(state, output)
             write(summary_path, summary)
@@ -218,6 +218,7 @@ if __name__ == '__main__':
     cmd = sub.add_parser('seed-bc', help='activate a new supported BC run from an explicit full checkpoint')
     cmd.add_argument('source', type=Path)
     cmd.add_argument('archive', type=Path)
+    cmd.add_argument('--max-wall-time-seconds', type=float, help='training wall budget for the new BC child')
     cmd = sub.add_parser('prepare')
     for name in ('state','summary','directory'):
         cmd.add_argument(name, type=Path)
@@ -234,7 +235,7 @@ if __name__ == '__main__':
     if args.cmd == 'seed':
         seed(args.project.resolve(), args.archive.resolve())
     elif args.cmd == 'seed-bc':
-        seed_bc(args.source.resolve(), args.archive.resolve())
+        seed_bc(args.source.resolve(), args.archive.resolve(), max_wall_time_seconds=args.max_wall_time_seconds)
     elif args.cmd == 'adopt-retry':
         from campaign import adopt_retry
         state = adopt_retry(args.original,args.retry)

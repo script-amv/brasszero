@@ -53,6 +53,7 @@ def main(argv: Optional[List[str]] = None):
     route.add_argument('--legacy', action='store_true', help='continue the historical main-bc line from BC788')
     bc.add_argument('--out', type=Path, help='supported experiment directory (required for --source or --resume)')
     bc.add_argument('--max-updates', type=int, required=True, help='absolute completed-update ceiling')
+    bc.add_argument('--max-wall-time-seconds', type=float, help='training wall budget for a new --source activation')
     bc.add_argument('--dynamic-league', action='store_true', help='activate the ranked main-history league')
     training = sub.add_parser('train', help='train/resume complete PPO update boundaries')
     training.add_argument('--config', type=Path, required=True)
@@ -170,6 +171,8 @@ def main(argv: Optional[List[str]] = None):
             with _graceful_signals(stop):
                 if args.cmd == 'train-bc':
                     if args.legacy:
+                        if args.max_wall_time_seconds is not None:
+                            parser.error('--max-wall-time-seconds requires activation with --source')
                         if args.out is not None:
                             parser.error('--legacy uses the historical main-bc run directory')
                         from .main_bc import continue_bc
@@ -178,7 +181,8 @@ def main(argv: Optional[List[str]] = None):
                         if args.out is None or args.dynamic_league:
                             parser.error('supported BC requires --out and uses the loss-priority league')
                         from .main_bc import train_bc
-                        report = train_bc(args.out, args.max_updates, stop, source=args.source)
+                        report = train_bc(args.out, args.max_updates, stop, source=args.source,
+                                          max_wall_time_seconds=args.max_wall_time_seconds)
                 else:
                     config = TrainConfig.from_json(args.config)
                     resume = args.out/'latest' if args.resume == 'latest' else Path(args.resume) if args.resume else None

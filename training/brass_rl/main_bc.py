@@ -57,7 +57,7 @@ def continue_bc(ceiling, stop, *, dynamic=False):
     return train(config, run, run/'latest', max_updates=ceiling, stop_requested=stop, dynamic_members=members)
 
 
-def train_bc(run, ceiling, stop, *, source=None):
+def train_bc(run, ceiling, stop, *, source=None, max_wall_time_seconds=None):
     from .bc_current import fork_bc
     from .config import BC_LEARNER
     from .train import train
@@ -68,7 +68,9 @@ def train_bc(run, ceiling, stop, *, source=None):
         raise ValueError('absolute update ceiling precedes the requested boundary')
     if source is not None:
         torch.set_num_threads(1)
-        fork_bc(source, run)
+        fork_bc(source, run, max_wall_time_seconds=max_wall_time_seconds)
+    elif max_wall_time_seconds is not None:
+        raise ValueError('--max-wall-time-seconds requires activation with --source')
     cfg = TrainConfig.from_json(run/'config.json')
     if cfg.learner != BC_LEARNER:
         raise ValueError('train-bc requires an activated supported BC experiment')

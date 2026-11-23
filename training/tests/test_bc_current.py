@@ -2,8 +2,11 @@
 """Full-source migration, resumed learner dispatch, and loss-priority accounting."""
 from dataclasses import replace
 import json
+import os
 from pathlib import Path
 import shutil
+import subprocess
+import sys
 
 import pytest
 
@@ -163,7 +166,9 @@ def test_cloud_seed_and_restore_preserve_profile_and_critic(coordinator, tmp_pat
     with pytest.raises(ValueError, match='archive'):
         prepare.seed_bc(source, tmp_path/'collision.json')
     archive = tmp_path/'seed.tar.gz'
-    prepare.seed_bc(source, archive)
+    env = dict(os.environ, PYTHONPATH=os.pathsep.join(str(ROOT/p) for p in ('training', 'engine/tools', 'players/search')))
+    subprocess.run([sys.executable, prepare.__file__, 'seed-bc', str(source), str(archive),
+                    '--max-wall-time-seconds', '10800'], check=True, env=env)
     extract(archive, tmp_path/'return')
     state = tmp_path/'return/state'
     summary = verify(state)
@@ -172,6 +177,10 @@ def test_cloud_seed_and_restore_preserve_profile_and_critic(coordinator, tmp_pat
     assert summary['replay_count'] == 0
     loaded = load_update(state/'run/latest')
     assert loaded.state.loss_priority['counts'] == {}
+    assert loaded.state.config.runtime.max_wall_time_seconds == 10800
+    exp = json.loads((state/'run/experiment.json').read_bytes())
+    assert exp['config_overrides']['runtime.max_wall_time_seconds'] == {
+        'from': original.state.config.runtime.max_wall_time_seconds, 'to': 10800}
     if trained_critic:
         assert summary['critic_adam_slots'] > 0
         assert_nested_equal(original.critic_state, loaded.critic_state)
@@ -190,7 +199,12 @@ def test_cli_and_generic_package_restore_current_boundary(coordinator, tmp_path)
     cfg = replace(cfg, ppo=replace(cfg.ppo, epochs=4, reward='score', critic_target='terminal'), league=LeagueConfig())
     source = coordinator.train(cfg, runs/'parent', max_updates=0).latest_checkpoint
     run = runs/'current'
-    main(['train-bc', '--out', str(run), '--source', str(source), '--max-updates', '0'])
+    main(['train-bc', '--out', str(run), '--source', str(source), '--max-updates', '0',
+          '--max-wall-time-seconds', '10800'])
+    assert TrainConfig.from_json(run/'config.json').runtime.max_wall_time_seconds == 10800
+    with pytest.raises(SystemExit):
+        main(['train-bc', '--out', str(run), '--resume', 'latest', '--max-updates', '0',
+              '--max-wall-time-seconds', '60'])
     main(['train-bc', '--out', str(run), '--resume', 'latest', '--max-updates', '0'])
     with pytest.raises(SystemExit):
         main(['train-bc', '--out', str(run), '--max-updates', '0'])
@@ -356,3 +370,42 @@ def test_rehashed_package_with_conflicting_bc_config_rejected_before_import(coor
     with pytest.raises(ValueError, match='learner'):
         import_package(bad, destination)
     assert not (destination/'training/runs').exists()
+
+def test_activation_budget_defaults_to_source_and_invalid_value_cannot_create_child(coordinator, tmp_path):
+    from brass_rl.bc_current import fork_bc
+    from test_stability_run import tree_digest
+
+    cfg = tiny_config()
+    cfg = replace(cfg, ppo=replace(cfg.ppo, epochs=4, reward='score', critic_target='terminal'), league=LeagueConfig(),
+                  runtime=replace(cfg.runtime, max_wall_time_seconds=17700))
+    run = tmp_path/'source'
+    source = coordinator.train(cfg, run, max_updates=0).latest_checkpoint
+    before = tree_digest(run)
+    base = fork_bc(source, tmp_path/'inherited')
+    assert load_update(base).state.config.runtime == cfg.runtime
+    exp = json.loads((base.parent.parent/'experiment.json').read_bytes())
+    assert 'runtime.max_wall_time_seconds' not in exp['config_overrides']
+    with pytest.raises(ValueError, match='runtime.max_wall_time_seconds'):
+        fork_bc(source, tmp_path/'invalid', max_wall_time_seconds=-1)
+    assert not (tmp_path/'invalid').exists() and tree_digest(run) == before
+
+
+@pytest.mark.parametrize('prior_notice', [None, 'control_unavailable'])
+def test_cloud_training_wall_budget_records_existing_deadline_reason(coordinator, tmp_path, prior_notice):
+    import time
+    from brass_rl.bc_current import fork_bc
+
+    state = tmp_path/'state'
+    base = fork_bc(source_checkpoint(coordinator, tmp_path, max_updates=0), state/'run',
+                   max_wall_time_seconds=0)
+    signals = tmp_path/'signals'
+    signals.mkdir()
+    notice = signals/'child-stop.json'
+    if prior_notice:
+        notice.write_text(json.dumps({'reason': prior_notice}))
+    env = dict(os.environ, BRASS_TRAIN_CUTOFF=str(time.monotonic()+3600),
+               PYTHONPATH=os.pathsep.join(str(ROOT/p) for p in ('training', 'engine/tools', 'players/search')))
+    worker = ROOT/'training/scripts/kaggle_control/train_run.py'
+    subprocess.run([sys.executable, worker, 'train', state, signals], check=True, env=env)
+    assert json.loads(notice.read_bytes())['reason'] == (prior_notice or 'deadline')
+    assert load_update(state/'run/latest').path == base

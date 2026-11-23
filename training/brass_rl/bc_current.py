@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Activate the supported BC profile from an explicitly named full boundary."""
 from dataclasses import fields, replace
+from functools import partial
 
 from .config import BCConfig, BC_LEARNER, TrainConfig
 from .experiments import read_experiment
@@ -8,7 +9,7 @@ from .learner_fork import ForkProfile, fork_learner
 from .loss_priority import initial_exposure
 
 
-def _profile(original, source):
+def _profile(original, source, *, max_wall_time_seconds):
     state = original.state
     metadata = read_experiment(source.parent.parent)
     arm = state.manifests.get('stability_arm')
@@ -20,8 +21,11 @@ def _profile(original, source):
     cfg = state.config
     values = {field.name: getattr(cfg, field.name) for field in fields(TrainConfig)}
     values.update(ppo=replace(cfg.ppo, target_kl=.05), games_per_update=8)
-    current = BCConfig(**values)
     overrides = {}
+    if max_wall_time_seconds is not None:
+        values['runtime'] = replace(cfg.runtime, max_wall_time_seconds=max_wall_time_seconds)
+        overrides['runtime.max_wall_time_seconds'] = {'from': cfg.runtime.max_wall_time_seconds, 'to': max_wall_time_seconds}
+    current = BCConfig(**values)
     for name, old, new in [('learner', cfg.learner, BC_LEARNER), ('games_per_update', cfg.games_per_update, 8),
                            ('ppo.target_kl', cfg.ppo.target_kl, .05)]:
         if old != new:
@@ -33,6 +37,6 @@ def _profile(original, source):
     return ForkProfile(current, True, {'learner': BC_LEARNER}, experiment, exposure)
 
 
-def fork_bc(source, dest):
+def fork_bc(source, dest, *, max_wall_time_seconds=None):
     """Create a compact BC child, preserving the source actor, RNG, league and both existing Adams."""
-    return fork_learner(source, dest, _profile)
+    return fork_learner(source, dest, partial(_profile, max_wall_time_seconds=max_wall_time_seconds))

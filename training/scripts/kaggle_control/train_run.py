@@ -181,8 +181,11 @@ def train(root, signals):
         return stop()
     run = root/'run'
     with _graceful_signals(stop):
-        advance(TrainConfig.from_json(run/'config.json'), run, run/'latest',
-                max_updates=999999, stop_requested=boundary)
+        report = advance(TrainConfig.from_json(run/'config.json'), run, run/'latest',
+                         max_updates=999999, stop_requested=boundary)
+    notice = signals/'child-stop.json'
+    if report.stop_reason == 'wall_time' and not notice.exists():
+        write(notice, dict(reason='deadline'))
 
 
 def recover(root, control_id):
