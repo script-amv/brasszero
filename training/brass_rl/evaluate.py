@@ -403,6 +403,8 @@ def periodic_development(model, update, league, run_dir, config, journal):
         earlier_report=evaluate(candidate,earlier_suite,evaluation/'earlier'/earlier_suite.manifest()['suite_id'])
         result['earlier']={'suite_id':earlier_report.suite_id,'opponent_id':earlier_meta.id,
                            'summary':asdict(earlier_report.summaries['earlier'])}
+        result['recorded_replay_ids'] = [r['replay_id'] for report in (report, earlier_report)
+                                         for r in report.results if 'replay_id' in r]
         return result
     finally:
         restore_rng_states(before)

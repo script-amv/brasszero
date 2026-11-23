@@ -548,20 +548,20 @@ def _overlay(source, destination):
     return changed
 
 
-def _prepare_updates(staged, manifest, destinations):
+def _prepare_updates(staged, manifest, destinations, external_parents=()):
     incoming = {i: staged/r for i, r in manifest['experiments'].items()}
     order = []
     def visit(identity):
         if identity not in order:
             parent = read_experiment(incoming[identity]).get('parent')
-            if parent:
+            if parent and parent not in external_parents:
                 visit(parent['experiment_id'])
             order.append(identity)
     visit(manifest['experiment_id'])
     if set(order) != set(incoming):
         raise ValueError('package contains unrelated experiments')
     existing = [target for target in destinations.values() if target.exists()]
-    plan_runs(existing, verify=False)
+    plan_runs(existing, verify=False, external_parents=external_parents)
     images, exchanges = {}, {}
     for identity in order:
         target, source = destinations[identity], incoming[identity]
@@ -588,7 +588,7 @@ def _prepare_updates(staged, manifest, destinations):
                 raise ValueError('incremental checkpoint import requires a single filesystem')
             exchanges[identity] = image/'updates'
         images[identity] = image
-    context = plan_runs(images.values(), verify=False)
+    context = plan_runs(images.values(), verify=False, external_parents=external_parents)
     permanent = {context.manifests[path] for path, reasons in context.protected.items()
                  if reasons & {'fork source', 'best', 'development selection', 'explicit'}}
     derived = 0
@@ -617,13 +617,33 @@ def import_package(package, project):
     merged update journal, including pins, after dependencies/models/replays.
     A crash leaves the old or new complete journal. Repeat import idempotently. No cross-directory global transaction claimed.
     """
+    with _unpack(package) as (tree, manifest):
+        return _import_tree(tree, manifest, project, _summary(package, manifest))
+
+
+def _import_tree(tree, manifest, project, summary, *, external_parent=None):
+    from .library import reconcile_models
     project = Path(project).resolve()
-    with _unpack(package) as (tree, manifest), writer_lock(project/'.experiment-import'):
+    with writer_lock(project/'.experiment-import'):
         registry = experiments_under(project/'training/runs')
         destinations = {i: registry.get(i, project/'training/runs'/i) for i in manifest['experiments']}
         with ExitStack() as locks:
-            for run in sorted(destinations.values()):
+            sources = set(destinations.values())
+            if external_parent:
+                owner = registry.get(external_parent['experiment_id'])
+                if not owner:
+                    raise ValueError('external parent experiment is missing from destination')
+                sources.add(owner)
+            for run in sorted(sources):
                 locks.enter_context(writer_lock(run))
+            if external_parent:
+                boundary = owner/'updates'/('%06d' % external_parent['update'])
+                policy, envelope = _policy(boundary)
+                if (not (boundary/'optimizer.pt').is_file() or policy['id'] != external_parent['model_id']
+                        or file_hash(boundary/'manifest.json') != external_parent['checkpoint_sha256']
+                        or external_parent.get('policy_sha256', envelope['content_hashes']['policy.pt'])
+                           != envelope['content_hashes']['policy.pt']):
+                    raise ValueError('external parent checkpoint identity mismatch')
             # Resolve public IDs before path conflict checks/counting. Curated
             # names (ppo-300 etc.) remain the canonical existing destination.
             existing_models = {}
@@ -642,13 +662,14 @@ def import_package(package, project):
             from brass_ai.replay_archive import Archive
             replay_dest = Archive(project/'replays')
             # Lock each logical replay ID including GUI/external writers.
+            game_locks = locks.enter_context(ExitStack())
             replay_actions = {}
             for path in (tree/'replays/games').glob('*'):
                 replay_id = path.name.split('.')[0]
-                locks.enter_context(writer_lock(replay_dest.root/'locks'/('transfer-'+replay_id)))
+                game_locks.enter_context(writer_lock(replay_dest.root/'locks'/('transfer-'+replay_id)))
                 import fcntl
                 (replay_dest.root/'locks').mkdir(exist_ok=True)
-                handle = locks.enter_context((replay_dest.root/'locks'/replay_id).open('a+b'))
+                handle = game_locks.enter_context((replay_dest.root/'locks'/replay_id).open('a+b'))
                 try:
                     fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 except BlockingIOError as exc:
@@ -686,10 +707,11 @@ def import_package(package, project):
                 staged = Path(temp)
                 for relative in targets:
                     link_or_copy(tree/relative, staged/relative)
-                order, exchanges, derived = _prepare_updates(staged, manifest, destinations)
+                order, exchanges, derived = _prepare_updates(staged, manifest, destinations, [external_parent] if external_parent else ())
                 added += derived
                 sync_tree(staged)
                 # Shared dependencies first: models as complete directories, replays as files.
+                added_models = 0
                 for source in (staged/'players/models').iterdir():
                     identity = read(source/'metadata.json')['id']
                     if identity in existing_models:
@@ -698,6 +720,7 @@ def import_package(package, project):
                     if not target.exists():
                         target.parent.mkdir(parents=True, exist_ok=True)
                         os.replace(source, target); sync_dir(target.parent)
+                        added_models += 1
                 for source in (staged/'replays/games').glob('*'):
                     target = project/'replays/games'/source.name
                     action, old_paths = replay_actions[source.name]
@@ -741,7 +764,20 @@ def import_package(package, project):
                     atomic(target/'latest', encoded({'update': updates[-1].name}))
                     metrics = b''.join(encoded(row) for u in updates for row in read(u/'metrics.json')['records'])
                     atomic(target/'metrics.jsonl', metrics)
-                receipt = dict(_summary(package, manifest), added_files=added,
+                models, journals = reconcile_models(project, {**registry, **destinations},
+                                             [destinations[i] for i in order], model_destinations.values())
+                receipt = dict(summary, added_files=added, catalog_models=models['models'], added_models=added_models,
+                               reused_models=len(model_destinations)-added_models,
+                               added_replays=sum(a == 'add' for a, _ in replay_actions.values()),
+                               advanced_replays=sum(a == 'advance' for a, _ in replay_actions.values()),
+                               deduplicated_replays=sum(a == 'skip' for a, _ in replay_actions.values()),
                                experiment_path=str(destinations[manifest['experiment_id']]))
-                atomic(project/'training/runs'/('.import-'+manifest['package_id']+'.json'), encoded(receipt))
-                return receipt
+            # Read interrupted journals in their actual lock state while the run locks still protect exemplars.
+            game_locks.close()
+            from .library_replays import reconcile_replays
+            coverage = reconcile_replays(project, destinations.values(), journals)
+            receipt['library_coverage'] = coverage
+            receipt['indexed_replays'] = coverage['indexed_replays']
+            receipt['added_replays'] += coverage['added_replays']
+        atomic(project/'training/runs'/('.import-'+manifest['package_id']+'.json'), encoded(receipt))
+        return receipt

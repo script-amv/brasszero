@@ -9,7 +9,8 @@ from .learner_fork import ForkProfile, fork_learner
 from .loss_priority import initial_exposure
 
 
-def _profile(original, source, *, max_wall_time_seconds):
+def _profile(original, source, *, max_wall_time_seconds, experimental):
+    from .library import launch_intent
     state = original.state
     metadata = read_experiment(source.parent.parent)
     arm = state.manifests.get('stability_arm')
@@ -31,12 +32,12 @@ def _profile(original, source, *, max_wall_time_seconds):
         if old != new:
             overrides[name] = {'from': old, 'to': new}
     exposure = state.loss_priority if state.loss_priority is not None else initial_exposure(state.next_game_id)
-    experiment = dict(mode='bc-current', learner=BC_LEARNER, config_overrides=overrides,
+    experiment = dict(mode='bc-current', learner=BC_LEARNER, library_intent=launch_intent(source, experimental), config_overrides=overrides,
                       critic_initialization='cloned' if original.critic_state is None else 'restored',
                       loss_priority_initialization='empty' if state.loss_priority is None else 'restored')
     return ForkProfile(current, True, {'learner': BC_LEARNER}, experiment, exposure)
 
 
-def fork_bc(source, dest, *, max_wall_time_seconds=None):
+def fork_bc(source, dest, *, max_wall_time_seconds=None, experimental=False):
     """Create a compact BC child, preserving the source actor, RNG, league and both existing Adams."""
-    return fork_learner(source, dest, partial(_profile, max_wall_time_seconds=max_wall_time_seconds))
+    return fork_learner(source, dest, partial(_profile, max_wall_time_seconds=max_wall_time_seconds, experimental=experimental))

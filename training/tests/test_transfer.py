@@ -128,11 +128,11 @@ def test_existing_curated_model_identity_is_reused(coordinator, tmp_path):
     coordinator.train(tiny_config(), run, max_updates=0)
     package = tmp_path/'result.tar.gz'; pack(run, package)
     b = tmp_path/'b'
-    model = next((tmp_path/'a/players/models').iterdir())
+    model = next(p for p in (tmp_path/'a/players/models').iterdir() if p.is_dir())
     shutil.copytree(model, b/'players/models/ppo-curated')
     import_package(package, b)
     assert import_package(package, b)['added_files'] == 0
-    assert [p.name for p in (b/'players/models').iterdir()] == ['ppo-curated']
+    assert [p.name for p in (b/'players/models').iterdir() if p.is_dir()] == ['ppo-curated']
 
 
 def test_package_rejects_undeclared_external_evaluation_opponent(coordinator, tmp_path):

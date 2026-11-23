@@ -90,11 +90,13 @@ def provider_status(kernel):
     return value.group(1).upper()
 
 
-def download(directory, job):
+def download(directory, job, *, project=None, local_only=False):
     import os
     from train_run import verify
     dest = directory/'verified'
-    with tempfile.TemporaryDirectory(prefix='download-',dir=directory) as tmp:
+    if local_only and not dest.is_dir():
+        raise ValueError('sealed local return is missing')
+    with tempfile.TemporaryDirectory(prefix='download-',dir=None if local_only else directory) as tmp:
         stage = Path(tmp)/'package'
         stage.mkdir()
         if dest.exists():
@@ -110,6 +112,10 @@ def download(directory, job):
                 receipt['revision'] != job['revision'] or receipt['experiment'] != job['initial']['experiment'] or
                 receipt['initial_archive'] != job['initial']['sha256']):
             raise ValueError('wrong return archive, source, or run')
+        if dest.is_dir() and read(dest/'verified.json').get('sha256') != receipt['sha256']:
+            raise ValueError('sealed archive differs from local verification')
+        if receipt.get('initial_manifest') != job['initial']['manifest']:
+            raise ValueError('return seed manifest differs from prepared job')
         extract(archive,stage/'.unpacked')
         (stage/'unpacked').symlink_to('.unpacked', target_is_directory=True)
         state = stage/'unpacked/state'
@@ -128,26 +134,35 @@ def download(directory, job):
         if dest.exists():
             if read(dest/'verified.json') != summary:
                 raise ValueError('stale local verification receipt differs from pinned return')
-            validate_prefix(state,dest/'unpacked/state')
+            if not local_only:
+                validate_prefix(state,dest/'unpacked/state')
         else:
             write(stage/'verified.json',summary)
             os.rename(stage,dest)
+            state = dest/'unpacked/state'
+        if project is not None:
+            from brass_rl.library import _publish_kaggle_state
+            return _publish_kaggle_state(state, project, summary)
     return summary
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('directory', type=Path)
-    parser.add_argument('command', choices=['status','stop','proof-stop','download','watch'])
+    parser.add_argument('command', choices=['status','stop','proof-stop','download','watch','ingest'])
     parser.add_argument('--wait-download', action='store_true')
+    parser.add_argument('--project-root', type=Path, help='destination data project for local library ingestion')
     args = parser.parse_args()
     directory = args.directory.resolve()
     job = read(directory/'job.json')
     if args.command == 'stop':
         directory = stop_target(directory,job)
         job = read(directory/'job.json')
-    if args.command == 'download':
-        show(download(directory,job))
+    project = args.project_root or job.get('library_project')
+    if (args.command in ('download', 'ingest') or args.wait_download) and not project:
+        parser.error('set --project-root to the destination data project')
+    if args.command in ('download', 'ingest'):
+        show(download(directory, job, project=Path(project), local_only=args.command == 'ingest'))
         return
     key = Path.home()/'.local/share/brass-kaggle-control'/job['run']/'owner.json'
     if key.is_symlink() or stat.S_IMODE(key.stat().st_mode) != 0o600:
@@ -182,7 +197,7 @@ def main():
         print(status,flush=True)
         if status == 'COMPLETE':
             if args.wait_download:
-                show(download(directory,job))
+                show(download(directory, job, project=Path(project)))
             return
         if status in ('ERROR','CANCELLED','CANCELED','CANCEL_REQUESTED','CANCEL_ACKNOWLEDGED','FAILED'):
             raise RuntimeError('provider ended without a confirmed normal publication')

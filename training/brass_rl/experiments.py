@@ -120,6 +120,8 @@ def ensure_experiment(run, config, *, state=None, parent=None):
              'created_at': datetime.now(timezone.utc).isoformat(),
              'producer': {'system': platform.system(), 'machine': platform.machine(), 'python': platform.python_version()},
              'historical_gaps': ['Pre-adoption updates/models/replays may be missing; inventory required.'] if legacy else []}
+    if not legacy:
+        value['library_intent'] = 'experimental'
     if legacy:
         lineage = run/'ancestry/continuation-lineage.json'
         if lineage.exists():
@@ -187,7 +189,7 @@ def branch_experiment(checkpoint, destination):
             for pin_file in (parent/'updates/pins').glob('*.json'):
                 if json.loads(pin_file.read_bytes())['update'] <= loaded.state.completed_updates:
                     link_or_copy(pin_file, temporary/'updates/pins'/pin_file.name)
-            own = {'format': FORMAT, 'id': 'exp-'+uuid.uuid4().hex, 'mode': 'full-state-branch',
+            own = {'format': FORMAT, 'id': 'exp-'+uuid.uuid4().hex, 'mode': 'full-state-branch', 'library_intent': 'experimental',
                    'parent': {'experiment_id': metadata['id'], 'update': loaded.state.completed_updates,
                               'checkpoint_sha256': hashlib.sha256((source/'manifest.json').read_bytes()).hexdigest(),
                               'model_id': json.loads((source/'metadata.json').read_text())['id']},

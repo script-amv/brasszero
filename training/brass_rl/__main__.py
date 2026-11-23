@@ -37,6 +37,17 @@ def main(argv: Optional[List[str]] = None):
     invocation_started = time.monotonic()
     parser = argparse.ArgumentParser(prog='brass_rl')
     sub = parser.add_subparsers(dest='cmd', required=True)
+    library = sub.add_parser('library', help='reconcile or adopt exact local library occurrences')
+    ops = library.add_subparsers(dest='operation', required=True)
+    repair = ops.add_parser('reconcile')
+    repair.add_argument('--run', dest='runs', action='append', type=Path)
+    accept = ops.add_parser('adopt')
+    accept.add_argument('--checkpoint', type=Path, required=True)
+    accept.add_argument('--expected-tip', required=True, help='exact predecessor policy ID, or none for an empty chain')
+    cloud = ops.add_parser('ingest-kaggle')
+    cloud.add_argument('--verified', type=Path, required=True)
+    for op in (repair, accept, cloud):
+        op.add_argument('--project-root', required=True, type=Path)
     retention = sub.add_parser('retention', help='audit checkpoint retention; default is read-only')
     retention.add_argument('--runs-root', type=Path, default=Path('training/runs'))
     retention.add_argument('--apply', action='store_true', help='pin historical endpoints and retire eligible Adam files')
@@ -54,6 +65,7 @@ def main(argv: Optional[List[str]] = None):
     bc.add_argument('--out', type=Path, help='supported experiment directory (required for --source or --resume)')
     bc.add_argument('--max-updates', type=int, required=True, help='absolute completed-update ceiling')
     bc.add_argument('--max-wall-time-seconds', type=float, help='training wall budget for a new --source activation')
+    bc.add_argument('--experimental', action='store_true', help='record experimental intent for the new BC child')
     bc.add_argument('--dynamic-league', action='store_true', help='activate the ranked main-history league')
     training = sub.add_parser('train', help='train/resume complete PPO update boundaries')
     training.add_argument('--config', type=Path, required=True)
@@ -100,7 +112,17 @@ def main(argv: Optional[List[str]] = None):
     search_arena.add_argument('arguments', nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
     try:
-        if args.cmd == 'transport-audit':
+        if args.cmd == 'library':
+            from .library import adopt_mainline, ingest_kaggle_return, reconcile_library
+            if args.operation == 'reconcile':
+                result = reconcile_library(args.project_root, runs=args.runs)
+            elif args.operation == 'adopt':
+                expected = None if args.expected_tip == 'none' else args.expected_tip
+                result = adopt_mainline(args.project_root, args.checkpoint, expected_tip=expected)
+            else:
+                result = ingest_kaggle_return(args.verified, args.project_root)
+            print(json.dumps(result, indent=2, allow_nan=False))
+        elif args.cmd == 'transport-audit':
             from .transport_coverage import audit
             result = audit(args.project_root, args.output, recover=args.recover)
             print(json.dumps({'manifest': str(args.output/'manifest.json'),
@@ -171,6 +193,8 @@ def main(argv: Optional[List[str]] = None):
             with _graceful_signals(stop):
                 if args.cmd == 'train-bc':
                     if args.legacy:
+                        if args.experimental:
+                            parser.error('--experimental requires activation with --source')
                         if args.max_wall_time_seconds is not None:
                             parser.error('--max-wall-time-seconds requires activation with --source')
                         if args.out is not None:
@@ -182,7 +206,7 @@ def main(argv: Optional[List[str]] = None):
                             parser.error('supported BC requires --out and uses the loss-priority league')
                         from .main_bc import train_bc
                         report = train_bc(args.out, args.max_updates, stop, source=args.source,
-                                          max_wall_time_seconds=args.max_wall_time_seconds)
+                                          max_wall_time_seconds=args.max_wall_time_seconds, experimental=args.experimental)
                 else:
                     config = TrainConfig.from_json(args.config)
                     resume = args.out/'latest' if args.resume == 'latest' else Path(args.resume) if args.resume else None
