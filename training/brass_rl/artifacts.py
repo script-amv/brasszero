@@ -497,9 +497,11 @@ def inspect_update_state(path, config=None):
         restore_rng_states(before)
 
 
-def load_update(path: Path, device: str = "cpu", config: Optional[TrainConfig] = None) -> LoadedUpdate:
+def load_update(path: Path, device: str = "cpu", config: Optional[TrainConfig] = None, *,
+                for_training: bool = False) -> LoadedUpdate:
     """Load trusted local training state; restore RNG only after all construction.
 
+    Set for_training on resume or fork to reject private research seed domains.
     Caller builds Adam(loaded.model.parameters()), then loads optimizer_state.
     Adam construction/load do not consume RNG; create other random objects before
     this call, or restore loaded.state.rng_states again with device=device after
@@ -510,6 +512,11 @@ def load_update(path: Path, device: str = "cpu", config: Optional[TrainConfig] =
         path = _resolve_update(path)
         manifest, payload, model, metadata = _validate_update(path)
         state, saved_config = _checkpoint_state(path, manifest, payload, model, metadata, config)
+        if for_training:
+            declaration = path.parent.parent/'experiment.json'
+            if ('league_research' in state.manifests or
+                    (declaration.exists() and 'league_research' in read_json(declaration))):
+                raise ArtifactError('league research replicates require their pinned research runtime and seed domain')
         optimizer_state = torch.load(io.BytesIO(payload["optimizer.pt"]), map_location=device, weights_only=False)
         model.to(device).train().requires_grad_(True)
         critic = critic_adam = None

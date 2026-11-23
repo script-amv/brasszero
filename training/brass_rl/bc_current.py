@@ -10,8 +10,6 @@ from .loss_priority import initial_exposure
 
 def _profile(original, source):
     state = original.state
-    if 'league_research' in state.manifests:
-        raise ValueError('league research replicates require their pinned research runtime and seed domain')
     metadata = read_experiment(source.parent.parent)
     arm = state.manifests.get('stability_arm')
     if (metadata.get('stability_arm') != arm or metadata.get('learner') != state.config.learner

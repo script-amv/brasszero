@@ -16,6 +16,7 @@ import tarfile
 import tempfile
 from functools import wraps
 
+from .config import BC_LEARNER, TrainConfig
 from .retention import pin, plan_runs, present_payloads, UPDATE_FILES
 from .experiments import (atomic, encoded, link_or_copy, project_for, read_experiment,
                           sync_dir, sync_tree, writer_lock)
@@ -180,7 +181,13 @@ def _inventory(tree, manifest):
         metadata = read_experiment(run)
         if metadata['id'] != identity:
             raise ValueError('experiment identity mismatch')
-        read(run/'config.json')
+        config = read(run/'config.json')
+        learner = config.get('learner')
+        if 'learner' in config or 'learner' in metadata or metadata['mode'] == 'bc-current':
+            if (learner != BC_LEARNER or metadata.get('learner') != learner or
+                    metadata['mode'] == 'stability-study' or 'stability_arm' in metadata or 'stability_protocol' in metadata):
+                raise ValueError('inconsistent BC learner declarations in config and experiment')
+            TrainConfig.from_mapping(config)
         parent = metadata.get('parent')
         if parent:
             if parent['experiment_id'] not in runs or parent['experiment_id'] == identity:
@@ -225,6 +232,9 @@ def _inventory(tree, manifest):
                 if not HEX.fullmatch(sha) or file_hash(run/'weights'/(sha+'.pt')) != sha:
                     raise ValueError('missing/corrupt opponent dependency')
             journal = read(update/'manifests.json')
+            if (journal.get('learner') != learner or
+                    (learner and ('stability_arm' in journal or 'stability_protocol' in journal))):
+                raise ValueError('inconsistent learner declaration in committed journal')
             for replay_id in journal.get('replay_ids', []):
                 if replay_id not in replays:
                     raise ValueError('missing linked replay: '+replay_id)

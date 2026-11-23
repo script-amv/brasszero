@@ -28,11 +28,11 @@ def seat_zero_collection(coordinator, monkeypatch):
     monkeypatch.setattr(coordinator, 'collect_batch', collect)
 
 
-def source_checkpoint(coordinator, root):
+def source_checkpoint(coordinator, root, max_updates=1):
     cfg = tiny_config()
     cfg = replace(cfg, league=LeagueConfig(),
                   ppo=replace(cfg.ppo, reward='score', critic_target='terminal', epochs=4))
-    return coordinator.train(cfg, root/'source', max_updates=1).latest_checkpoint
+    return coordinator.train(cfg, root/'source', max_updates=max_updates).latest_checkpoint
 
 
 def test_profile_is_explicit_and_cannot_start_without_a_source(coordinator, tmp_path):
@@ -239,18 +239,120 @@ def test_corrupt_supported_state_cannot_resume_as_shared(coordinator, tmp_path, 
         load_update(path)
 
 
-def test_research_replicate_source_is_not_reseeded(coordinator, tmp_path):
+def edit_journal(checkpoint, change):
     import hashlib
-    from brass_rl.bc_current import fork_bc
+    path = checkpoint/'manifests.json'
+    value = json.loads(path.read_bytes())
+    change(value)
+    path.write_text(json.dumps(value))
+    envelope = json.loads((checkpoint/'manifest.json').read_bytes())
+    envelope['content_hashes'][path.name] = hashlib.sha256(path.read_bytes()).hexdigest()
+    (checkpoint/'manifest.json').write_text(json.dumps(envelope))
 
-    source = source_checkpoint(coordinator, tmp_path)
-    payload = source/'manifests.json'
-    value = json.loads(payload.read_bytes())
-    value['league_research'] = {'format': 'brass-research-league/1', 'mode': 'loss-priority',
-                                'replicate': 1, 'first_game_id': 2, 'next_game_id': 2, 'counts': {}}
-    payload.write_text(json.dumps(value))
-    manifest = json.loads((source/'manifest.json').read_bytes())
-    manifest['content_hashes'][payload.name] = hashlib.sha256(payload.read_bytes()).hexdigest()
-    (source/'manifest.json').write_text(json.dumps(manifest))
-    with pytest.raises(ValueError, match='pinned research runtime'):
-        fork_bc(source, tmp_path/'child')
+
+@pytest.mark.parametrize('location', ['experiment', 'journal'])
+def test_research_marker_rejects_training_and_forks_but_allows_transport(coordinator, tmp_path, location):
+    from brass_rl.bc_current import fork_bc
+    from brass_rl.experiments import branch_experiment
+    from brass_rl.learning_study import fork_arm
+    from brass_rl.stability_run import fork_stability
+    from brass_rl.transfer import pack, verify
+    from test_stability_run import tree_digest
+
+    base = source_checkpoint(coordinator, tmp_path, max_updates=0)
+    run = base.parent.parent
+    mark = {'format': 'brass-research-league/1', 'mode': 'loss-priority', 'replicate': 1,
+            'first_game_id': 0, 'next_game_id': 0, 'counts': {}}
+    if location == 'experiment':
+        path = run/'experiment.json'
+        data = json.loads(path.read_bytes())
+        path.write_text(json.dumps(dict(data, league_research=mark)))
+    else:
+        edit_journal(base, lambda data: data.update(league_research=mark))
+    before = tree_digest(run)
+    config = load_update(base).state.config
+    archive = tmp_path/'research.tar.gz'
+    pack(run, archive)
+    assert verify(archive)['updates'] == 1
+    child = tmp_path/'child'
+    attempts = (
+        lambda: coordinator.train(config, run, run/'latest', 1),
+        lambda: fork_bc(base, child),
+        lambda: fork_stability(base, child, True),
+        lambda: branch_experiment(base, child),
+        lambda: fork_arm(base, child, .95),
+    )
+    for attempt in attempts:
+        with pytest.raises(ValueError, match='pinned research runtime'):
+            attempt()
+        assert tree_digest(run) == before
+        assert not child.exists()
+
+
+@pytest.mark.parametrize('damage', ['no_config_learner', 'no_journal_learner', 'stability_arm', 'unsupported_settings'])
+def test_pack_checks_public_bc_declarations(coordinator, tmp_path, damage):
+    from brass_rl.bc_current import fork_bc
+    from brass_rl.transfer import pack
+
+    base = fork_bc(source_checkpoint(coordinator, tmp_path, max_updates=0), tmp_path/'bc')
+    run = base.parent.parent
+    if damage == 'no_journal_learner':
+        edit_journal(base, lambda data: data.pop('learner'))
+    elif damage == 'stability_arm':
+        path = run/'experiment.json'
+        data = json.loads(path.read_bytes())
+        path.write_text(json.dumps(dict(data, stability_arm='candidate')))
+    else:
+        path = run/'config.json'
+        data = json.loads(path.read_bytes())
+        if damage == 'no_config_learner':
+            del data['learner']
+        else:
+            data['ppo']['target_kl'] = .03
+        path.write_text(json.dumps(data))
+    archive = tmp_path/'bad.tar.gz'
+    with pytest.raises(ValueError, match='learner|brass-bc/1'):
+        pack(run, archive)
+    assert not archive.exists()
+
+
+def test_rehashed_package_with_conflicting_bc_config_rejected_before_import(coordinator, tmp_path):
+    import io
+    import tarfile
+    from brass_rl.bc_current import fork_bc
+    from brass_rl.transfer import pack, verify, import_package, digest, encoded
+
+    base = fork_bc(source_checkpoint(coordinator, tmp_path, max_updates=0), tmp_path/'bc')
+    run = base.parent.parent
+    good, bad = tmp_path/'good.tar.gz', tmp_path/'bad.tar.gz'
+    pack(run, good)
+    # Model and checkpoint blobs remain authentic. Replace only this run's top-level config
+    # and rehash its complete transport envelope to exercise semantic verification.
+    config = json.loads((run/'config.json').read_bytes())
+    config['learner'] = 'different-learner'
+    replacement = encoded(config)
+    with tarfile.open(good) as src, tarfile.open(bad, 'w:gz') as out:
+        manifest = json.load(src.extractfile('manifest.json'))
+        relative = manifest['experiments'][manifest['experiment_id']]+'/config.json'
+        old = manifest['files'][relative]['sha256']
+        assert sum(row['sha256'] == old for row in manifest['files'].values()) == 1
+        manifest['files'][relative] = dict(sha256=digest(replacement), size=len(replacement))
+        del manifest['package_id']
+        manifest['package_id'] = digest(encoded(manifest))
+        for item in src.getmembers():
+            if item.name == 'manifest.json':
+                content = encoded(manifest)
+            elif item.name == 'blobs/'+old:
+                item.name = 'blobs/'+digest(replacement)
+                content = replacement
+            else:
+                out.addfile(item, src.extractfile(item))
+                continue
+            item.size = len(content)
+            out.addfile(item, io.BytesIO(content))
+    with pytest.raises(ValueError, match='learner'):
+        verify(bad)
+    destination = tmp_path/'destination'
+    with pytest.raises(ValueError, match='learner'):
+        import_package(bad, destination)
+    assert not (destination/'training/runs').exists()

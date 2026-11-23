@@ -160,7 +160,7 @@ def branch_experiment(checkpoint, destination):
     temporary = None
     with writer_lock(parent), writer_lock(destination):
         try:
-            loaded = load_update(source)
+            loaded = load_update(source, for_training=True)
             metadata = ensure_experiment(parent, loaded.state.config, state=loaded.state)
             temporary = Path(tempfile.mkdtemp(prefix='.branch-', dir=str(destination.parent)))
             for directory in ('updates', 'weights', 'policies'):

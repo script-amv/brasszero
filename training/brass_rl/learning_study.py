@@ -55,7 +55,7 @@ def fork_arm(source, dest, lam, *, learning_rate=None, study_config=None, dynami
         if dest.exists():
             raise ValueError('study arm already exists')
         try:
-            original = load_update(source)
+            original = load_update(source, for_training=True)
             s = original.state
             rate = s.config.ppo.learning_rate if learning_rate is None else learning_rate
             cfg = replace(s.config, ppo=replace(s.config.ppo, gae_lambda=lam, learning_rate=rate),

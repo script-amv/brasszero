@@ -39,7 +39,7 @@ def fork_learner(source, dest, configure):
             if dest.exists():
                 raise ValueError('fork destination already exists')
             parent = parent_identity(source)
-            original = load_update(source)
+            original = load_update(source, for_training=True)
             state, model = original.state, original.model
             plan = configure(original, source)
             with tempfile.TemporaryDirectory(prefix='.learner-fork-', dir=dest.parent) as temp:

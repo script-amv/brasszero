@@ -243,6 +243,9 @@ def _train(config: TrainConfig, run_dir: Path, resume: Optional[Path] = None,
     stop = stop_requested if stop_requested is not None else StopFlag()
     notes = ()
     critic = critic_optimizer = None
+    loaded = None
+    if resume is not None:
+        loaded = load_update(Path(resume), device=config.runtime.device, config=config, for_training=True)
     run_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='.snapshots-', dir=str(run_dir)) as raw_dir:
         raw_dir = Path(raw_dir)
@@ -266,7 +269,6 @@ def _train(config: TrainConfig, run_dir: Path, resume: Optional[Path] = None,
                 raw_path.unlink()
             state = replace(state, league_snapshots=league.snapshots, holdouts=league.holdouts)
         else:
-            loaded = load_update(Path(resume), device=config.runtime.device, config=config)
             if loaded.path.parent.parent != run_dir:
                 raise ValueError('resume checkpoint must belong to --out run directory')
             journal = committed_records(run_dir)
