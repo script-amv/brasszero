@@ -28,6 +28,20 @@ def _record_signature(game):
     return digest([game['initial'], game['moves'], [s.get('name') for s in game['seats']]])
 
 
+def _identifier(value):
+    return isinstance(value, str) and bool(value)
+
+
+def _game_number(value):
+    return type(value) is int or _identifier(value)
+
+
+def _evaluation_key(suite, candidate, number):
+    if _identifier(suite) and _identifier(candidate) and _game_number(number):
+        return suite, candidate, str(number)
+    return None
+
+
 def _coverage(owner, number, seed, result):
     return (owner, str(number), seed, tuple(result.get('vp', [])), tuple(result.get('ranking', [])))
 
@@ -95,12 +109,16 @@ def reconcile_replays(project, runs, journals):
             continue
         p = r['provenance']
         available.add(name)
-        who = p.get('run_experiment') or p.get('experiment')
-        if r['category'] == 'training':
-            games.add(_coverage(paths.get(who, who), p.get('game'), r['initial'].get('seed'), r['result']))
+        who = p.get('run_experiment')
+        if who is None:
+            who = p.get('experiment')
+        if r['category'] == 'training' and _identifier(who) and _game_number(p.get('game')):
+            games.add(_coverage(paths.get(who, who), p['game'], r['initial'].get('seed'), r['result']))
         elif r['category'] == 'evaluation':
-            key = p.get('suite_id', p.get('experiment')), p.get('candidate_id'), str(p.get('game_id', p.get('game')))
-            evaluations[key].append(_evaluation_evidence(r['initial'], r['seats'], r['result']))
+            key = _evaluation_key(p.get('suite_id', p.get('experiment')), p.get('candidate_id'),
+                                  p.get('game_id', p.get('game')))
+            if key is not None:
+                evaluations[key].append(_evaluation_evidence(r['initial'], r['seats'], r['result']))
         if digest(r['initial']) in seeds:
             signature = _record_signature(r)
             if signature in signatures:
@@ -141,8 +159,9 @@ def reconcile_replays(project, runs, journals):
         if info['category'] == 'evaluation':
             row = json.loads((path.parent.parent/'games'/path.name).read_bytes())
             evidence = _evaluation_evidence(c['initial'], c['seats'], result)
-            if _matches_outcome(row, evidence):
-                evaluations[(info.get('suite_id'), info.get('candidate_id'), game_id)].append(evidence)
+            key = _evaluation_key(info.get('suite_id'), info.get('candidate_id'), info.get('game_id', info.get('game')))
+            if key is not None and _matches_outcome(row, evidence):
+                evaluations[key].append(evidence)
             else:
                 info = dict(category='legacy', game=path.stem)
         if not matched:
@@ -155,28 +174,32 @@ def reconcile_replays(project, runs, journals):
                 count += int(archive.publish(record))
             matching[signature].append(name)
             available.add(name)
-        if info['category'] == 'training':
+        if info['category'] == 'training' and _identifier(who):
             games.add(_coverage(who, game_id, c['initial'].get('seed'), record['result']))
     missing_eval = set()
     for run in runs:
         for path in (run/'evaluation').glob('**/games/*.json'):
             game = json.loads(path.read_bytes())
-            key = game.get('suite_id'), game.get('candidate_id'), str(game.get('game_id'))
+            key = _evaluation_key(game.get('suite_id'), game.get('candidate_id'), game.get('game_id'))
             if not any(_matches_outcome(game, evidence) for evidence in evaluations.get(key, ())):
                 missing_eval.add(str(path.relative_to(project)))
     missing, missing_ids = set(), set()
     for run, experiment, update, journal in journals:
         owner = journal.get('experiment_id', experiment['id'])
-        aliases = {owner}
-        if owner == experiment['id']:
-            aliases.add(experiment.get('legacy_replay_identity', owner))
+        if not _identifier(owner):
+            owner = None
+        aliases = [owner] if owner else []
+        legacy = experiment.get('legacy_replay_identity')
+        if owner == experiment['id'] and _identifier(legacy):
+            aliases.append(legacy)
         for row in journal.get('train', []):
             if not any(_coverage(alias, row['game_id'], row.get('deal_seed'), row.get('outcome', {})) in games for alias in aliases):
                 missing.add((owner, update, row['game_id']))
         missing_ids.update(set(journal.get('replay_ids', []))-available)
     indexed = len(archive.rebuild())
+    gaps = sorted(missing, key=lambda item: (item[0] or '', item[1], item[2]))
     return dict(indexed_replays=indexed, legacy_files=len(files), added_replays=count,
                 missing_training_games=len(missing), missing_evaluation_games=len(missing_eval),
                 missing_evaluation_rows=sorted(missing_eval),
-                missing_games=[dict(experiment_id=e, update=n, game=g) for e,n,g in sorted(missing)],
+                missing_games=[dict(experiment_id=e, update=n, game=g) for e,n,g in gaps],
                 missing_linked_replays=sorted(missing_ids), incomplete_legacy_files=incomplete)

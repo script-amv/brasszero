@@ -506,3 +506,93 @@ def test_manual_publication_respects_another_run_writer(coordinator, tmp_path):
         with pytest.raises(ValueError, match='active'):
             call.result()
     assert read(tmp_path/'players/models/lineage.json')['mainline_tip'] == tip
+
+
+@pytest.mark.parametrize('category,bad_key,opaque', [
+    ('training', 'experiment', {'owner': 'old'}),
+    ('evaluation', 'suite_id', ['old suite']),
+    ('evaluation', 'candidate_id', {'actor': 'old'}),
+])
+def test_unrelated_import_preserves_opaque_recording(coordinator, tmp_path, category, bad_key, opaque):
+    from brass_ai.replay_archive import Archive, Recorder, labeled_seats
+    from brass_rl.transfer import import_package, pack
+    from helpers import native_game
+    run = tmp_path/'source/training/runs/original'
+    coordinator.train(tiny_config(), run, max_updates=0)
+    packet = tmp_path/'packet.tgz'
+    pack(run, packet)
+    destination = tmp_path/'dest'
+    archive = Archive(destination/'replays')
+    game = native_game('GameOver')
+    provenance = dict(category=category, experiment='old', game=0, suite_id='old suite', candidate_id='old actor')
+    provenance[bad_key] = opaque
+    recorder = Recorder(archive, start_state=game.to_json(), seats=labeled_seats(['random']*4), provenance=provenance)
+    recorder.finish(game)
+    original = archive.path(recorder.game_id).read_bytes()
+    result = import_package(packet, destination)
+    assert result['indexed_replays'] == 1 and result['added_models'] == 1
+    assert archive.path(recorder.game_id).read_bytes() == original
+    assert json.loads((archive.root/'index.jsonl').read_bytes())['game_id'] == recorder.game_id
+
+
+@pytest.mark.parametrize('missing,siblings', [('source', True), ('base', True), ('base', False)])
+def test_cached_fork_remains_visible_but_requires_fresh_crossing(coordinator, tmp_path, missing, siblings, seat_zero_collection):  # noqa: F811
+    from brass_rl.bc_current import fork_bc
+    from brass_rl.library import adopt_mainline, reconcile_library
+    from test_bc_current import source_checkpoint
+    runs = tmp_path/'training/runs'
+    root = source_checkpoint(coordinator, runs, max_updates=0)
+    tip = adopt_mainline(tmp_path, root, expected_tip=None)['mainline_tip']
+    models = tmp_path/'players/models'
+    a, b = runs/'a', runs/'b'
+    fork_bc(root, a)
+    if siblings:
+        fork_bc(root, b)
+    original = {p: p.read_bytes() for p in [models/'lineage.json', models/'catalog.json']}
+    for run in ([a, b] if siblings else [a]):
+        coordinator.train(tiny_config_for(run), run, run/'latest', 1)
+    for path, raw in original.items():
+        path.write_bytes(raw)
+    source = root if missing == 'source' else a/'updates'/root.name
+    source.rename(tmp_path/'offline')
+    result = reconcile_library(tmp_path, runs=[a])
+    registry = read(models/'lineage.json')
+    assert registry['branches'][read(a/'experiment.json')['id']]['parent'] == tip
+    assert registry['mainline_tip'] == tip
+    (tmp_path/'offline').rename(source)
+    if siblings:
+        # Establish both known competitors, then refresh A offline and B alone online.
+        competitors = reconcile_library(tmp_path)['ambiguous_continuations']
+        assert len(competitors) == 2
+        source.rename(tmp_path/'offline')
+        assert reconcile_library(tmp_path, runs=[a])['ambiguous_continuations'] == competitors
+        (tmp_path/'offline').rename(source)
+        assert reconcile_library(tmp_path, runs=[b])['ambiguous_continuations'] == competitors
+        assert read(models/'lineage.json')['mainline_tip'] == tip
+    else:
+        assert result['ambiguous_continuations'] == []
+        reconcile_library(tmp_path, runs=[a])
+        assert read(models/'lineage.json')['mainline_tip']['experiment_id'] == read(a/'experiment.json')['id']
+
+
+def test_positive_contradiction_cannot_replace_proven_fork(coordinator, tmp_path):
+    from dataclasses import replace
+    from brass_rl.experiments import branch_experiment
+    from brass_rl.library import reconcile_library
+    from brass_rl.model_inventory import inventory_writer
+    from brass_rl.experiments import writer_lock
+    runs = tmp_path/'training/runs'
+    root = coordinator.train(tiny_config(), runs/'parent', max_updates=0).latest_checkpoint
+    child = runs/'child'
+    branch_experiment(root, child)
+    reconcile_library(tmp_path, runs=[child])
+    registry = tmp_path/'players/models/lineage.json'
+    before = registry.read_bytes()
+    assert read(registry)['branches'][read(child/'experiment.json')['id']]['parent']
+    different = coordinator.train(replace(tiny_config(), master_seed=4), tmp_path/'other', max_updates=0).latest_checkpoint
+    (child/'updates'/root.name).rename(tmp_path/'offline')
+    different.rename(child/'updates'/root.name)
+    with pytest.raises(ValueError, match='provenance conflict'):
+        with writer_lock(child), inventory_writer(tmp_path) as inventory:
+            inventory.register(child)
+    assert registry.read_bytes() == before

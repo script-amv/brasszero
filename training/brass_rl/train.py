@@ -174,16 +174,15 @@ def update_recordings(archive, episodes, update, experiment, run_experiment, cap
                     or record['result']['ranking'] != list(ep.result.ranking)):
                 raise ValueError('captured training recording disagrees with its collected game')
             records.append(record)
-        if captured:
-            return records
-        for replay_id in evaluation_ids:
+        for replay_id in evaluation_ids or ():
             row = archive.read(replay_id)
-            if (row['category'] != 'evaluation' or row['status'] != 'completed'
+            if (row['game_id'] != replay_id or row['category'] != 'evaluation' or row['status'] != 'completed'
                     or row['provenance'].get('run_experiment') != run_experiment
                     or row['provenance'].get('update') != update):
                 raise ValueError('captured evaluation recording disagrees with update')
             records.append(row)
-        return sorted(records, key=lambda r: r['game_id'])
+        # Captured checkpoint journals preserve collector order, followed by the evaluation suites.
+        return records if captured else sorted(records, key=lambda r: r['game_id'])
     # Legacy callers and synthetic collectors without recorders use the old lookup.
     return [r for r in archive.records() if r['provenance'].get('update') == update and
             (r['provenance'].get('experiment') == experiment or r['provenance'].get('run_experiment') == run_experiment)]

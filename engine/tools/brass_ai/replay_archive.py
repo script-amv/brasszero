@@ -369,6 +369,11 @@ class Archive:
         return True
 
 
+def recording_id(initial, seats, provenance, engine_id):
+    stable = {k: v for k, v in provenance.items() if k != 'experiment_path'}
+    return digest(dict(initial=initial, seats=seats, provenance=stable, engine_id=engine_id))
+
+
 class Recorder:
     @storage_operation
     def __init__(self, archive=None, *, seed=None, start_state=None, seats, provenance,
@@ -396,8 +401,7 @@ class Recorder:
             raise ValueError('seed must be uint64')
         initial = {'seed': seed} if seed is not None else {'start_state': start_state}
         identity = {'initial': initial, 'seats': seats, 'provenance': provenance, 'engine_id': engine_id()}
-        stable = {**identity, 'provenance': {k: v for k, v in provenance.items() if k != 'experiment_path'}}
-        self.game_id = game_id or digest(stable)
+        self.game_id = game_id or recording_id(**identity)
         self.path = self.archive.path(self.game_id, '.jsonl')
         self.record = dict(identity, format=FORMAT, game_id=self.game_id,
                            category=provenance.get('category', 'unknown'),

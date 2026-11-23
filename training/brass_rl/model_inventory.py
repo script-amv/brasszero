@@ -89,6 +89,7 @@ class Inventory:
         self.locations_by_policy = None
         self.checkpoints = {}
         self.verified_checkpoints = {}
+        self.verified_parents = {}
         for policy, occurrences in registry['occurrences'].items():
             for occurrence in occurrences:
                 self.checkpoints[occurrence['branch_id'], occurrence['update']] = occurrence
@@ -99,6 +100,13 @@ class Inventory:
         identity = exp['id']
         parent = exp.get('parent')
         intent = library_intent(run, exp)
+        branch = self.registry['branches'].setdefault(identity, {})
+        declaration = file_hash(run/'experiment.json')
+        if branch.get('declaration_sha256') not in (None, declaration):
+            raise ValueError('experiment declaration conflict')
+        proven = branch.get('parent')
+        if proven and (not parent or proven != _parent_ref(parent) or exp['base_update'] != parent['update']):
+            raise ValueError('branch parent provenance conflict')
         verified = None
         if parent:
             if locations is not None:
@@ -109,8 +117,16 @@ class Inventory:
                     from .transfer import experiments_under
                     self.locations = experiments_under(self.project/'training/runs')
                 owner = self.project/known if known else self.locations.get(parent['experiment_id'])
+            number = parent['update']
+            base = run/'updates'/('%06d' % number)
+            same_actor = False
+            if exp['base_update'] == number and (base/'manifest.json').is_file():
+                actor, _ = _policy(base)
+                same_actor = actor['id'] == parent['model_id'] and actor['update'] == number
+                if proven and not same_actor:
+                    raise ValueError('child activation actor provenance conflict')
             if owner:
-                boundary = owner/'updates'/('%06d' % parent['update'])
+                boundary = owner/'updates'/('%06d' % number)
                 if (boundary/'manifest.json').is_file():
                     meta, envelope = _policy(boundary)
                     if (read_experiment(owner)['id'] != parent['experiment_id']
@@ -119,20 +135,14 @@ class Inventory:
                             or parent.get('policy_sha256', envelope['content_hashes']['policy.pt'])
                                != envelope['content_hashes']['policy.pt']):
                         raise ValueError('parent checkpoint provenance conflict')
-                    base = run/'updates'/boundary.name
-                    if exp['base_update'] == parent['update'] and (base/'manifest.json').exists():
-                        actor, _ = _policy(base)
-                        if actor['id'] == meta['id'] and actor['update'] == parent['update']:
-                            verified = _parent_ref(parent)
-        branch = self.registry['branches'].setdefault(identity, {})
-        if branch.get('parent') and verified and branch['parent'] != verified:
-            raise ValueError('branch parent provenance conflict')
-        if branch.get('declaration_sha256') not in (None, file_hash(run/'experiment.json')):
-            raise ValueError('experiment declaration conflict')
+                    if same_actor:
+                        verified = _parent_ref(parent)
+        if destination is None:
+            self.verified_parents[identity] = verified
         branch.update(experiment_id=identity, label=exp.get('stability_arm') or ('BC continuation' if exp['mode'] == 'bc-current' else run.name),
-                      run=(destination or run).relative_to(self.project).as_posix(), parent=verified,
+                      run=(destination or run).relative_to(self.project).as_posix(), parent=verified or proven,
                       library_intent=intent,
-                      declaration_sha256=file_hash(run/'experiment.json'), base_update=exp['base_update'])
+                      declaration_sha256=declaration, base_update=exp['base_update'])
         return exp
 
     def publish(self, source, *, run=None, experiment=None, checkpoint=None, preflight=False):
@@ -263,7 +273,10 @@ class Inventory:
         while len(candidates) == 1:
             candidate = candidates[0]
             key = candidate['experiment_id'], candidate['update']
-            if self.verified_checkpoints.get(key) != candidate['checkpoint_sha256']:
+            tip = self.registry['mainline_tip']
+            crossing = candidate['experiment_id'] != tip['experiment_id']
+            if (self.verified_checkpoints.get(key) != candidate['checkpoint_sha256']
+                    or (crossing and self.verified_parents.get(candidate['experiment_id']) != tip)):
                 break
             self.accept(candidate)
             candidates = self.continuation_candidates()

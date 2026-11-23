@@ -236,6 +236,7 @@ def test_actual_evaluation_archives_all_games_with_zero_exemplars(tmp_path, poli
     assert not list((tmp_path/'eval').rglob('replays/*.json'))
     for row in report.results:
         record = records[row['game_id']]
+        assert row.get('replay_id') == record['game_id']
         game = brass.Game(record['initial']['seed'])
         for action in record['moves']:
             assert action['player'] == game.current_player()
@@ -254,6 +255,28 @@ def test_actual_evaluation_archives_all_games_with_zero_exemplars(tmp_path, poli
         assert 'value_predictions' not in record and all('values' not in move for move in record['moves'])
     assert evaluate(policy, suite, tmp_path/'eval').results == report.results
     assert len(archive.rebuild()) == 4
+    # Pre-ID outcome rows stay immutable. Recover their recordings by exact identity.
+    original = {}
+    for path in (tmp_path/'eval').rglob('games/*.json'):
+        legacy = json.loads(path.read_bytes())
+        legacy.pop('replay_id')
+        path.write_text(json.dumps(legacy))
+        original[path] = path.read_bytes()
+    recovered = evaluate(policy, suite, tmp_path/'eval',
+                         before_game=lambda: pytest.fail('reused outcome was replayed'))
+    assert [r.get('replay_id') for r in recovered.results] == [r['replay_id'] for r in report.results]
+    assert all(p.read_bytes() == raw for p, raw in original.items())
+    # An outcome alone cannot attest a recording; a conflicting outcome must never be linked.
+    old_path = next(iter(original))
+    legacy = json.loads(original[old_path])
+    legacy['vp'][0] += 1
+    old_path.write_text(json.dumps(legacy))
+    with pytest.raises(ValueError, match='recording'):
+        evaluate(policy, suite, tmp_path/'eval')
+    old_path.write_bytes(original[old_path])
+    archive.path(records[legacy['game_id']]['game_id']).unlink()
+    partial = evaluate(policy, suite, tmp_path/'eval', before_game=lambda: pytest.fail('regenerated historical row'))
+    assert 'replay_id' not in partial.results[legacy['game_id']]
 
 
 def test_outcome_only_eval_never_scores_value_head(tmp_path, monkeypatch):
