@@ -32,8 +32,6 @@ docs/TRAINING-HISTORY.md
 docs/USAGE.md
 docs/datasheets/CC-BY-4.0.txt
 docs/model-cards/ppo-788-BC-3466c7765c2d.md
-docs/superpowers/plans/2026-11-22-ppo-stability.md
-docs/superpowers/specs/2026-11-22-ppo-stability-design.md
 engine/bindings/Cargo.toml
 engine/bindings/pyproject.toml
 engine/bindings/src/lib.rs
@@ -341,6 +339,3 @@ training/tests/test_train.py
 training/tests/test_transfer.py
 training/tests/test_transfer_legacy_bench.py
 training/tests/test_transport_coverage.py
-docs/superpowers/specs/2026-11-23-bc-current-design.md
-docs/superpowers/plans/2026-11-23-bc-current.md
-docs/superpowers/specs/2026-11-23-library-lineage-design.md

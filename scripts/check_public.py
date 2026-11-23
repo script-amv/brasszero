@@ -31,6 +31,8 @@ DENIED_ROOTS = (
     "replays/locks/",
     "replays/index.jsonl",
     "docs/archive/",
+    "docs/superpowers/",
+    "docs/plans/",
     "dist/",
 )
 IMAGES = {".svg", ".jpg", ".jpeg", ".png", ".webp", ".gif", ".ico", ".avif"}

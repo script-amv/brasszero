@@ -11,6 +11,8 @@
 /engine/oracles/cases/ts-data.json
 /docs/rules-sources/
 /.superpowers/
+/docs/superpowers/
+/docs/plans/
 /.worktrees/
 /dist/
 **/target/
