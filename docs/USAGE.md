@@ -47,6 +47,8 @@ See `training/configs/bc-current.json` for the standard profile. Activation inhe
 
 Committed training updates publish their portable actors, exact experiment occurrences and replay index. The default archive belongs to the run's data project. Use an explicit `BRASS_REPLAY_ROOT` for an isolated QA archive or cloud working state. A publication failure can follow a successful update commit. Resume the latest boundary with the same update ceiling to repair publication without playing more games.
 
+In the local dashboard, **Model history** defaults to **Mainline**. Select **All** to include experimental and unresolved histories. VP curves follow each registered branch separately. **Chart branch** selects one history for the action shares and VP source breakdown. Select a score to inspect its game and seat. The latest mainline model can appear in inventory before it has recorded games, since training batch N uses the actor from the preceding boundary.
+
 ### Local PPO stability experiment
 
 For an explicitly authorized stability study, `brass_rl.stability_run.fork_stability(source, dest, candidate)` creates a compact run from a trusted numeric BC checkpoint and returns its new base checkpoint path. Pass `False` for the two-game shared-network control or `True` for the eight-game candidate. The parent manifest digest, configuration changes, initialization checks and runtime differences are recorded in `experiment.json`. Each new run retains the exact parent actor export, active league, counters, actor Adam and RNG state. Earlier history stays in the parent.
