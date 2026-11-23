@@ -16,7 +16,7 @@
 - Loss-priority only, old50/35/15 and eight snapshots, weighted draws with replacement; p=(2+W+T/2)/(4+N), weight1+4(1-p)^2, frozen mass normalized to pool size, baselines1each.
 - Preserve independent source critic/Adam, actor/Adam, RNG and counters. No rewrite of immutable source/config under existing runs; old ordinary and stability study resume remains valid.
 - No engine/information-boundary/hash-bug changes; no GUI restart; no push, paid compute, new model recommendation or extra scientific training.
-- One eight-game local integration QA; one subsequent free private Kaggle job up to three hours with checkpoint-stop/export reserve, source selected update4071.
+- One eight-game local integration QA; one subsequent free private Kaggle trainer up to10800seconds with separate providerheadroom14100seconds (40mincheckpoint/export+15minsetup), source selected update4071.
 
 ## Review Focus
 
@@ -50,5 +50,5 @@
 - [ ] Complete required `make test lint check-public` on final source, one numerical process. No redundant unchanged suites.
 - [ ] Broad final review covers Task1 plus actual operator/transport proofs; preserve evidence. Apply at most the scoped necessary fix wave with covering checks.
 - [ ] Merge into local main after verifying current base is unchanged and safe; preserve old worktrees/artifacts/GUI. Verify merged HEAD exactly matches tested code and smoke/status checks; no push.
-- [ ] Prepare private pinned source/full-state input, checksum all transport boundaries, register scoped remote graceful-stop control without exposing secrets, check free Kaggle availability, submit one CPU job with three-hour deadline and checkpoint/export reserve. Recover/retry only if no training has been admitted, never duplicate a running trainer.
+- [ ] Prepare private pinned source/full-state input, checksum all transport boundaries, register scoped remote graceful-stop control without exposing secrets, check free Kaggle availability, submit one CPU job with a10800secondtrainerlimit and14100secondproviderdeadline includingcheckpoint/export/setupreserve. Recover/retry only if no training has been admitted, never duplicate a running trainer.
 - [ ] Confirm actual source preflight and training admission/progress. Provide notebook link, exact settings/source, monitor/stop/retrieve commands, export locations and limitations. State whether output remains remote or has been downloaded. Never claim a run started from submission alone.
