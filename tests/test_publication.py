@@ -19,6 +19,8 @@ def test_private_paths_and_imports():
     assert scan_path("gui/private.py") == "private path"
     assert scan_path("engine/oracles/vendor/README") == "private path"
     assert scan_path(".env.credentials") == "environment file"
+    assert scan_path("docs/superpowers/plans/2026-01-01-task.md") == "private path"
+    assert scan_path("docs/plans/task.md") == "private path"
     path = "/" + "Us" + "ers/"
     assert "home directory" in scan_text("note.md", path, [])
     module = "gu" + "i"
