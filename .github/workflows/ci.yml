@@ -23,8 +23,10 @@ jobs:
       - run: python3 scripts/check_binding_audit.py
       - run: cargo deny check advisories licenses
   fresh-core:
-    runs-on: ubuntu-latest
+    # ubuntu-latest (26.04) ships no Python 3.9 build; 24.04 does.
+    runs-on: ubuntu-24.04
     strategy:
+      fail-fast: false
       matrix:
         python: ['3.9', '3.x']
     steps:
