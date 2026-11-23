@@ -164,3 +164,71 @@ def test_v1_qa_checkpoint_cannot_resume_under_new_guard(coordinator, tmp_path):
     path.write_text(json.dumps(exp))
     with pytest.raises(ValueError, match='stability'):
         train_stability(arm, 0)
+
+
+@pytest.mark.parametrize('candidate', [False, True])
+def test_generic_branch_preserves_stability_identity_and_full_checkpoint(coordinator, tmp_path, candidate):
+    from brass_rl.experiments import branch_experiment
+    from brass_rl.stability_run import PROTOCOL, fork_stability, train_stability
+
+    arm = tmp_path/'arm'
+    fork_stability(source_checkpoint(coordinator, tmp_path), arm, candidate)
+    source = train_stability(arm, 8 if candidate else 2).latest_checkpoint
+    original = load_update(source)
+    if candidate:
+        assert original.critic_optimizer_state['state']
+    before = tree_digest(source)
+    dest = tmp_path/'child'
+    declared = branch_experiment(source, dest)
+    assert declared['stability_arm'] == ('candidate' if candidate else 'control')
+    assert declared['stability_protocol'] == PROTOCOL
+    resumed = train_stability(dest, 0)
+    child = load_update(resumed.latest_checkpoint)
+    assert child.state.completed_updates == original.state.completed_updates
+    assert child.state.next_game_id == original.state.next_game_id
+    assert tree_digest(child.path) == tree_digest(source) == before
+    for name in ('optimizer_state', 'critic_state', 'critic_optimizer_state'):
+        assert_nested_equal(getattr(child, name), getattr(original, name))
+
+
+@pytest.mark.parametrize('candidate', [False, True])
+def test_shared_learning_fork_refuses_stability_before_pin(coordinator, tmp_path, candidate):
+    from brass_rl.learning_study import fork_arm
+    from brass_rl.stability_run import fork_stability, train_stability
+
+    arm = tmp_path/'arm'
+    source = fork_stability(source_checkpoint(coordinator, tmp_path), arm, candidate)
+    if candidate:
+        source = train_stability(arm, 8).latest_checkpoint
+        assert load_update(source).critic_optimizer_state['state']
+    before = tree_digest(arm)
+    dest = tmp_path/'shared'
+    with pytest.raises(ValueError, match='shared.*checkpoint'):
+        fork_arm(source, dest, .95)
+    assert not dest.exists()
+    assert tree_digest(arm) == before
+
+
+@pytest.mark.parametrize('damage', ['conflicting_arm', 'obsolete_protocol', 'missing_experiment'])
+def test_generic_branch_rejects_invalid_stability_declaration_before_pin(coordinator, tmp_path, damage):
+    from brass_rl.experiments import branch_experiment
+    from brass_rl.stability_run import fork_stability
+
+    arm = tmp_path/'arm'
+    source = fork_stability(source_checkpoint(coordinator, tmp_path), arm, True)
+    path = arm/'experiment.json'
+    if damage == 'missing_experiment':
+        path.unlink()
+    else:
+        meta = json.loads(path.read_bytes())
+        if damage == 'obsolete_protocol':
+            meta['stability_protocol'] = 'brass-ppo-stability/1'
+        else:
+            meta['stability_arm'] = 'control'
+        path.write_text(json.dumps(meta))
+    before = tree_digest(arm)
+    dest = tmp_path/'child'
+    with pytest.raises(ValueError, match='stability'):
+        branch_experiment(source, dest)
+    assert not dest.exists()
+    assert tree_digest(arm) == before

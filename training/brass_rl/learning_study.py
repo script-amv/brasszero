@@ -57,6 +57,11 @@ def fork_arm(source, dest, lam, *, learning_rate=None, study_config=None, dynami
         try:
             original = load_update(source, for_training=True)
             s = original.state
+            metadata = read_experiment(source.parent.parent)
+            if (original.critic_state is not None or 'stability_arm' in s.manifests or
+                    'stability_arm' in metadata or 'stability_protocol' in metadata or
+                    metadata.get('mode') == 'stability-study' or metadata.get('learner') is not None):
+                raise ValueError('historical learning fork requires an ordinary shared PPO checkpoint')
             rate = s.config.ppo.learning_rate if learning_rate is None else learning_rate
             cfg = replace(s.config, ppo=replace(s.config.ppo, gae_lambda=lam, learning_rate=rate),
                           eval=replace(s.config.eval, interval_updates=0),

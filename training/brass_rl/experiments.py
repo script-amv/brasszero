@@ -161,7 +161,16 @@ def branch_experiment(checkpoint, destination):
     with writer_lock(parent), writer_lock(destination):
         try:
             loaded = load_update(source, for_training=True)
-            metadata = ensure_experiment(parent, loaded.state.config, state=loaded.state)
+            arm = loaded.state.manifests.get('stability_arm')
+            metadata = read_experiment(parent) if (parent/'experiment.json').exists() else {}
+            if (arm or 'stability_arm' in metadata or 'stability_protocol' in metadata
+                    or metadata.get('mode') == 'stability-study'):
+                from .stability_run import PROTOCOL
+                if (arm is None or metadata.get('stability_arm') != arm or
+                        metadata.get('stability_protocol') != PROTOCOL or metadata.get('learner') is not None):
+                    raise ValueError('stability branch requires a matching source arm and protocol')
+            if not metadata:
+                metadata = ensure_experiment(parent, loaded.state.config, state=loaded.state)
             temporary = Path(tempfile.mkdtemp(prefix='.branch-', dir=str(destination.parent)))
             for directory in ('updates', 'weights', 'policies'):
                 if not (parent/directory).exists():
@@ -188,6 +197,8 @@ def branch_experiment(checkpoint, destination):
                    'historical_gaps': metadata.get('historical_gaps', [])}
             if loaded.state.config.learner:
                 own['learner'] = loaded.state.config.learner
+            if arm:
+                own.update(stability_arm=arm, stability_protocol=metadata['stability_protocol'])
             atomic(temporary/'experiment.json', encoded(own))
             atomic(temporary/'config.json', encoded(asdict(loaded.state.config)))
             sync_tree(temporary)
