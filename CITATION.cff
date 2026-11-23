@@ -3,7 +3,8 @@ message: "Please cite the version used for your research."
 title: BrassZero
 type: software
 authors:
-  - name: TODO-owner
+  - given-names: Dmitrii
+    family-names: Shostak
 version: 0.1.0
 date-released: 2026-11-21
 license: Apache-2.0

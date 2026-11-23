@@ -6,5 +6,5 @@ export const siteConfig = {
     'BrassZero is an open research project teaching a program to play Brass: Birmingham, a four-player strategy game of industry and credit, through self-play alone.',
   // Project address on the project domain (DECISIONS.md D13). The contact
   // button is hidden until this is set.
-  contactEmail: null as string | null,
+  contactEmail: 'hello@brasszero.org' as string | null,
 };

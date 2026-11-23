@@ -46,6 +46,8 @@ BANNED = (
     ),
     (re.compile(r"(?<![\w@])[\w.+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(?![\w.])"), "email address"),
 )
+# The one public project address (DECISIONS.md D13). Every other address is rejected.
+PROJECT_ADDRESS = "hello@brasszero.org"
 
 
 def git(*args, check=True):
@@ -63,7 +65,7 @@ def scan_path(name):
 
 def scan_text(name, content, private):
     for pattern, message in BANNED:
-        if pattern.search(content):
+        if any(m.group(0) != PROJECT_ADDRESS for m in pattern.finditer(content)):
             yield message
     if any(value.casefold() in content.casefold() for value in private):
         yield "private identifier"

@@ -27,6 +27,17 @@ def test_private_paths_and_imports():
     assert "private identifier" in scan_text("note.md", "Example Identifier", ["example identifier"])
 
 
+def test_only_the_project_address_is_public():
+    assert "email address" not in list(scan_text("SECURITY.md", "Contact hello@brasszero.org.", []))
+    at = "@"
+    for other in (
+        "someone" + at + "example.com",
+        "hello" + at + "brasszero.org.evil.com",
+        "xhello" + at + "brasszero.org",
+    ):
+        assert "email address" in list(scan_text("note.md", other, [])), other
+
+
 def test_private_source_alias_marks_qa_for_export():
     record = {"category": "evaluation", "provenance": {"sources": [{"path": "old/qa/run"}]}}
     assert public_record(record) == ("qa/validation", None)
