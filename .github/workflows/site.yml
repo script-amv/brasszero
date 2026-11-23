@@ -15,8 +15,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: '22'
           cache: npm
@@ -26,7 +26,7 @@ jobs:
           .venv/bin/python -m pip install PyYAML==6.0.3
       - run: npm --prefix site ci
       - run: make test-site
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: site-dist
           path: site/dist
@@ -48,14 +48,14 @@ jobs:
           else
             echo "::notice::Pages credentials are absent. The build artifact remains available."
           fi
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         if: steps.configured.outputs.ready == 'true'
         with:
           name: site-dist
           path: dist
       - name: Deploy the built artifact
         if: steps.configured.outputs.ready == 'true'
-        uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd
+        uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
