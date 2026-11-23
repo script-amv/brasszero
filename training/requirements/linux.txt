@@ -3,7 +3,7 @@
 # Retain the actual pip freeze, runtime/hardware/source and test evidence for each
 # new environment; see docs/KAGGLE.md. GPU compatibility is a separate gate.
 torch==2.2.2
-numpy==1.26.4
+numpy==2.2.6
 maturin==1.9.6
 pytest==8.4.2
 trueskill==0.4.5
