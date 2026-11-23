@@ -336,3 +336,5 @@ training/tests/test_train.py
 training/tests/test_transfer.py
 training/tests/test_transfer_legacy_bench.py
 training/tests/test_transport_coverage.py
+docs/superpowers/specs/2026-11-23-bc-current-design.md
+docs/superpowers/plans/2026-11-23-bc-current.md
