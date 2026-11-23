@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Owner commands. Credentials are loaded only from the private Mac file."""
 import argparse
+import errno
 import re
 import json
 from pathlib import Path
@@ -101,7 +102,12 @@ def download(directory, job, *, project=None, local_only=False):
         stage.mkdir()
         if dest.exists():
             for name in ('return.json','continuation.tar.gz'):
-                os.link(dest/name,stage/name)
+                try:
+                    os.link(dest/name,stage/name)
+                except OSError as exc:
+                    if exc.errno != errno.EXDEV:
+                        raise
+                    shutil.copyfile(dest/name,stage/name)
         else:
             if provider_status(job['kernel']) != 'COMPLETE':
                 raise ValueError('pinned Kaggle version has not completed publication')

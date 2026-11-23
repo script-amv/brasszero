@@ -140,6 +140,17 @@ def test_sealed_kaggle_return_uses_fresh_extraction_and_verified_parent(coordina
     (verified/'unpacked').mkdir()
     (verified/'unpacked/extra').write_text('untrusted')
     registry = tmp_path/'players/models/lineage.json'
+    import errno
+    import os
+    import owner
+    real_link = os.link
+    def external_volume(src, dst, *args, **kwargs):
+        if Path(src).parent == verified:
+            raise OSError(errno.EXDEV, 'different volumes')
+        return real_link(src, dst, *args, **kwargs)
+    with monkeypatch.context() as patch:
+        patch.setattr(os, 'link', external_volume)
+        assert owner.download(job, declaration, local_only=True)['policy'] == seed['policy']
     before = registry.read_bytes()
     with pytest.raises(ValueError):
         ingest_kaggle_return(verified, tmp_path/'missing-parent-project')
@@ -246,3 +257,191 @@ def test_adopted_untagged_bc_resume_keeps_future_occurrences_mainline(coordinato
     assert registry['mainline_tip']['policy_id'] == read(next_update.latest_policy/'metadata.json')['id']
     assert registry['mainline_tip']['experiment_id'] == meta['id']
     assert (run/'experiment.json').read_bytes() == original
+
+
+@pytest.mark.parametrize('fault', ['mainline', 'typo', 'occurrence'])
+def test_review_static_preflight_precedes_publication(coordinator, tmp_path, fault):
+    from brass_rl.transfer import import_package, pack
+    from brass_ai.replay_archive import Archive, Recorder, labeled_seats
+    run = tmp_path/'source/training/runs/original'
+    base = coordinator.train(tiny_config(), run, max_updates=0).latest_checkpoint
+    exp = read(run/'experiment.json')
+    archive = Archive(tmp_path/'source/replays')
+    recorder = Recorder(archive, seed=9, seats=labeled_seats(['random']*4),
+                        provenance=dict(category='training', experiment=exp['id'], game=0, update=1))
+    recorder.interrupt()
+    dest = tmp_path/'dest'
+    if fault == 'occurrence':
+        import shutil
+        registry = read(tmp_path/'source/players/models/lineage.json')
+        pid = read(base/'metadata.json')['id']
+        registry['occurrences'][pid][0]['checkpoint_sha256'] = '0'*64
+        (dest/'players/models').mkdir(parents=True)
+        (dest/'players/models/lineage.json').write_text(json.dumps(registry))
+        shutil.copyfile(tmp_path/'source/players/models/catalog.json', dest/'players/models/catalog.json')
+    packet = tmp_path/'packet.tgz'
+    pack(run, packet, replay_root=archive.root)
+    if fault != 'occurrence':
+        # A sealed historical v1 packet can contain fields its producer did not understand.
+        import io
+        import tarfile
+        from brass_rl.transfer import digest, encoded, verify
+        bad = tmp_path/'bad.tgz'
+        with tarfile.open(packet) as src, tarfile.open(bad, 'w:gz') as out:
+            manifest = json.load(src.extractfile('manifest.json'))
+            reference = manifest['files']['training/runs/'+exp['id']+'/experiment.json']
+            old_blob = 'blobs/'+reference['sha256']
+            declaration = encoded(dict(exp, library_intent=fault))
+            reference.update(sha256=digest(declaration), size=len(declaration))
+            manifest.pop('package_id')
+            manifest['package_id'] = digest(encoded(manifest))
+            for member in src.getmembers():
+                raw = src.extractfile(member).read()
+                if member.name == old_blob:
+                    member.name = 'blobs/'+reference['sha256']
+                    raw = declaration
+                elif member.name == 'manifest.json':
+                    raw = encoded(manifest)
+                member.size = len(raw)
+                out.addfile(member, io.BytesIO(raw))
+        packet = bad
+        with pytest.raises(ValueError, match='intent'):
+            verify(packet)
+    with pytest.raises(ValueError):
+        import_package(packet, dest)
+    assert not list((dest/'training/runs').glob('*/experiment.json'))
+    assert not list((dest/'players/models').glob('*/policy.pt'))
+    assert not list((dest/'replays/games').glob('*'))
+    if fault != 'occurrence':
+        exp['library_intent'] = 'experimental'
+        (run/'experiment.json').write_text(json.dumps(exp))
+        repaired = tmp_path/'repaired.tgz'
+        pack(run, repaired, replay_root=archive.root)
+        imported = import_package(repaired, dest)
+        assert (imported['added_models'], imported['added_replays']) == (1, 1)
+
+
+@pytest.mark.parametrize('operation', ['reconcile', 'adopt'])
+def test_review_checkpoint_bytes_verified_after_retirement(coordinator, tmp_path, operation):
+    from brass_rl.library import adopt_mainline, reconcile_library
+    from brass_rl.retention import retire, file_sha
+    run = tmp_path/'training/runs/trial'
+    coordinator.train(tiny_config(), run, max_updates=2)
+    middle = run/'updates/000001'
+    if (middle/'optimizer.pt').is_file():
+        retire(middle, file_sha(middle/'manifest.json'))
+    assert not (middle/'optimizer.pt').exists()
+    reconcile_library(tmp_path)
+    root_id = read(run/'updates/000000/metadata.json')['id']
+    adopt_mainline(tmp_path, run/'updates/000000', expected_tip=None)
+    registry = tmp_path/'players/models/lineage.json'
+    before = registry.read_bytes()
+    # Break the checkpoint copy only; the immutable portable export remains healthy.
+    (middle/'policy.pt').unlink()
+    (middle/'policy.pt').write_bytes(b'corrupt available payload')
+    with pytest.raises(ValueError):
+        if operation == 'reconcile':
+            reconcile_library(tmp_path)
+        else:
+            adopt_mainline(tmp_path, run/'updates/000002', expected_tip=root_id)
+    assert registry.read_bytes() == before
+
+
+@pytest.mark.parametrize('kind', ['different-actor', 'unknown-parent'])
+def test_review_adoption_requires_verified_actor_preserving_crossing(coordinator, tmp_path, kind):
+    from dataclasses import replace
+    from brass_rl.experiments import parent_identity
+    from brass_rl.library import adopt_mainline, reconcile_library
+    real = coordinator.train(tiny_config(), tmp_path/'training/runs/parent', max_updates=0).latest_checkpoint
+    other = tmp_path/'outside'
+    base = coordinator.train(replace(tiny_config(), master_seed=8), other, max_updates=0).latest_checkpoint
+    exp = read(other/'experiment.json')
+    exp['parent'] = parent_identity(real)
+    if kind == 'unknown-parent':
+        exp['parent']['experiment_id'] = 'exp-'+'a'*32
+    (other/'experiment.json').write_text(json.dumps(exp))
+    run = tmp_path/'training/runs/child'
+    other.rename(run)
+    reconcile_library(tmp_path)
+    predecessor = None
+    if kind == 'different-actor':
+        predecessor = adopt_mainline(tmp_path, real, expected_tip=None)['mainline_tip']['policy_id']
+    registry = tmp_path/'players/models/lineage.json'
+    before = registry.read_bytes()
+    with pytest.raises(ValueError):
+        adopt_mainline(tmp_path, run/'updates'/base.name, expected_tip=predecessor)
+    assert registry.read_bytes() == before
+
+
+@pytest.mark.parametrize('siblings,reverse_names', [(False, True), (True, False), (True, True)])
+def test_review_reconciliation_follows_only_unique_continuations(coordinator, tmp_path, siblings, reverse_names, seat_zero_collection):  # noqa: F811
+    from brass_rl.bc_current import fork_bc
+    from brass_rl.library import adopt_mainline, reconcile_library
+    from test_bc_current import source_checkpoint
+    project = tmp_path/'project'
+    runs = project/'training/runs'
+    root = source_checkpoint(coordinator, runs, max_updates=0)
+    start = adopt_mainline(project, root, expected_tip=None)['mainline_tip']
+    models = project/'players/models'
+    old = {p.name: p.read_bytes() for p in (models/'lineage.json', models/'catalog.json')}
+    a, b = (runs/'z', runs/'a') if reverse_names else (runs/'a', runs/'z')
+    fork_bc(root, a)
+    if siblings:
+        fork_bc(root, b)
+    tip = coordinator.train(tiny_config_for(a), a, a/'latest', 1)
+    if not siblings:
+        fork_bc(tip.latest_checkpoint, b)
+    coordinator.train(tiny_config_for(b), b, b/'latest', 1 if siblings else 2)
+    for name, raw in old.items():
+        (models/name).write_bytes(raw)
+    report = reconcile_library(project)
+    first = (models/'lineage.json').read_bytes()
+    registry = json.loads(first)
+    if siblings:
+        assert registry['mainline_tip'] == start
+        assert {o['experiment_id'] for o in report['ambiguous_continuations']} == {
+            read(a/'experiment.json')['id'], read(b/'experiment.json')['id']}
+    else:
+        assert registry['mainline_tip']['experiment_id'] == read(b/'experiment.json')['id']
+        assert registry['mainline_tip']['update'] == 2
+    reconcile_library(project)
+    assert (models/'lineage.json').read_bytes() == first
+
+
+@pytest.mark.parametrize('mismatch', ['deal', 'seats', 'candidate', 'result', None])
+def test_review_evaluation_exemplar_requires_matching_evidence(coordinator, tmp_path, mismatch):
+    from helpers import native_game
+    from brass_ai.replay_archive import Archive, outcome
+    from brass_rl.library import reconcile_library
+    run = tmp_path/'training/runs/trial'
+    actor = read(coordinator.train(tiny_config(), run, max_updates=0).latest_policy/'metadata.json')['id']
+    directory = run/'evaluation/trial'
+    (directory/'games').mkdir(parents=True)
+    (directory/'replays').mkdir()
+    game = native_game('GameOver')
+    state = game.to_json()
+    labels = [actor, 'random', 'random', 'random']
+    row = dict(suite_id='suite', game_id=0, candidate_id=actor, candidate_seat=0, labels=labels,
+               start_state=state, **outcome(game))
+    if mismatch == 'deal':
+        row['start_state'] = native_game('GameOver', rotation=1).to_json()
+    if mismatch == 'candidate':
+        del row['candidate_seat'], row['labels']
+        row['candidate_id'] = 'policy-sha256-v1:'+'0'*64
+    if mismatch == 'result':
+        row['vp'] = [999]*4
+    if mismatch == 'seats':
+        row['labels'] = ['random', actor, 'random', 'random']
+        row['candidate_seat'] = 1
+    (directory/'games/00000000.json').write_text(json.dumps(row))
+    payload = dict(format='brass-gui-game/1', start_state=state, moves=[],
+                   seats=[dict(name=name, kind='human') for name in labels])
+    (directory/'replays/00000000.json').write_text(json.dumps(payload))
+    for repeat in range(2):
+        report = reconcile_library(tmp_path)
+        assert report['missing_evaluation_games'] == int(bool(mismatch))
+        assert report['indexed_replays'] == 1
+        assert report['added_replays'] == int(not repeat)
+        if mismatch:
+            record = Archive(tmp_path/'replays').records()[0]
+            assert record['provenance'].get('candidate_id') is None

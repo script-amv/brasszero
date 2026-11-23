@@ -79,6 +79,18 @@ def read_experiment(run):
     return value
 
 
+def library_intent(run, experiment):
+    """Check the portable classification at verification and registration boundaries."""
+    from .config import BC_LEARNER, TrainConfig
+    intent = experiment.get('library_intent', 'experimental')
+    if intent not in ('mainline', 'experimental'):
+        raise ValueError('unknown portable library intent')
+    if intent == 'mainline' and (not experiment.get('parent') or experiment.get('learner') != BC_LEARNER
+            or experiment.get('mode') != 'bc-current' or TrainConfig.from_json(run/'config.json').learner != BC_LEARNER):
+        raise ValueError('mainline intent requires the supported BC continuation profile')
+    return intent
+
+
 def parent_identity(source):
     meta = json.loads((source/'metadata.json').read_bytes())
     manifest = (source/'manifest.json').read_bytes()

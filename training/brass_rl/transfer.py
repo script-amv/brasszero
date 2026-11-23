@@ -18,7 +18,7 @@ from functools import wraps
 
 from .config import BC_LEARNER, TrainConfig
 from .retention import pin, plan_runs, present_payloads, UPDATE_FILES
-from .experiments import (atomic, encoded, link_or_copy, project_for, read_experiment,
+from .experiments import (atomic, encoded, library_intent, link_or_copy, project_for, read_experiment,
                           sync_dir, sync_tree, writer_lock)
 
 FORMAT = 'brass-experiment-package/1'
@@ -179,6 +179,7 @@ def _inventory(tree, manifest):
             raise ValueError('invalid experiment mapping')
         run = tree/relative
         metadata = read_experiment(run)
+        library_intent(run, metadata)
         if metadata['id'] != identity:
             raise ValueError('experiment identity mismatch')
         config = read(run/'config.json')
@@ -623,6 +624,7 @@ def import_package(package, project):
 
 def _import_tree(tree, manifest, project, summary, *, external_parent=None):
     from .library import reconcile_models
+    from .model_inventory import inventory_writer
     project = Path(project).resolve()
     with writer_lock(project/'.experiment-import'):
         registry = experiments_under(project/'training/runs')
@@ -709,6 +711,14 @@ def _import_tree(tree, manifest, project, summary, *, external_parent=None):
                     link_or_copy(tree/relative, staged/relative)
                 order, exchanges, derived = _prepare_updates(staged, manifest, destinations, [external_parent] if external_parent else ())
                 added += derived
+                catalog_lock = locks.enter_context(ExitStack())
+                inventory = catalog_lock.enter_context(inventory_writer(project))
+                existing_runs = {dest: dest for dest in destinations.values() if dest.exists()}
+                if existing_runs:
+                    reconcile_models(project, registry, existing_runs, inventory=inventory, destinations=existing_runs)
+                staged_runs = {i: staged/manifest['experiments'][i] for i in order}
+                reconcile_models(project, {**registry, **staged_runs}, staged_runs.values(), inventory=inventory,
+                                 destinations={staged_runs[i]: destinations[i] for i in order})
                 sync_tree(staged)
                 # Shared dependencies first: models as complete directories, replays as files.
                 added_models = 0
@@ -765,14 +775,16 @@ def _import_tree(tree, manifest, project, summary, *, external_parent=None):
                     metrics = b''.join(encoded(row) for u in updates for row in read(u/'metrics.json')['records'])
                     atomic(target/'metrics.jsonl', metrics)
                 models, journals = reconcile_models(project, {**registry, **destinations},
-                                             [destinations[i] for i in order], model_destinations.values())
+                                             [destinations[i] for i in order], model_destinations.values(), inventory=inventory)
                 receipt = dict(summary, added_files=added, catalog_models=models['models'], added_models=added_models,
                                reused_models=len(model_destinations)-added_models,
+                               ambiguous_continuations=models['ambiguous_continuations'],
                                added_replays=sum(a == 'add' for a, _ in replay_actions.values()),
                                advanced_replays=sum(a == 'advance' for a, _ in replay_actions.values()),
                                deduplicated_replays=sum(a == 'skip' for a, _ in replay_actions.values()),
                                experiment_path=str(destinations[manifest['experiment_id']]))
             # Read interrupted journals in their actual lock state while the run locks still protect exemplars.
+            catalog_lock.close()
             game_locks.close()
             from .library_replays import reconcile_replays
             coverage = reconcile_replays(project, destinations.values(), journals)

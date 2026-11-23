@@ -32,6 +32,52 @@ def _coverage(owner, number, seed, result):
     return (owner, str(number), seed, tuple(result.get('vp', [])), tuple(result.get('ranking', [])))
 
 
+def _initial_id(initial):
+    if isinstance(initial.get('start_state'), str):
+        return digest({'start_state': json.loads(initial['start_state'])})
+    return digest(initial)
+
+
+def _evaluation_evidence(initial, seats, result):
+    identities = seat_identities(seats, legacy=True)
+    return (_initial_id(initial), result.get('vp'), result.get('ranking'),
+            [(s.get('name'), ident.get('version_id')) for s, ident in zip(seats, identities)])
+
+
+def _matches_outcome(row, evidence):
+    initial, vp, ranking, seats = evidence
+    if 'deal_seed' in row:
+        expected = {'seed': row['deal_seed']}
+    elif 'start_state' in row:
+        expected = {'start_state': row['start_state']}
+    else:
+        return False
+    if _initial_id(expected) != initial or vp != row.get('vp') or ranking != row.get('ranking'):
+        return False
+
+    def matches_seat(label, seat):
+        name, identity = seat
+        if not isinstance(label, str) or not label:
+            return False
+        if identity and label in ('random', 'greedy'):
+            return identity == label or identity.startswith(label+':native-v1:')
+        if identity and (label.startswith(('policy-sha256-v1:', 'greedy:native-', 'random:native-'))
+                         or ':weights-sha256:' in label):
+            return identity == label
+        return label in (name, identity)
+
+    labels = row.get('labels')
+    if labels is not None and (len(labels) != len(seats) or
+                               not all(matches_seat(label, seat) for label, seat in zip(labels, seats))):
+        return False
+    candidate = row.get('candidate_seat')
+    if candidate is not None:
+        return (type(candidate) is int and 0 <= candidate < len(seats)
+                and matches_seat(row.get('candidate_id'), seats[candidate]))
+    actor = row.get('candidate_id')
+    return actor is None or any(matches_seat(actor, seat) for seat in seats)
+
+
 def reconcile_replays(project, runs, journals):
     import brass
     from .transfer import file_hash
@@ -40,7 +86,8 @@ def reconcile_replays(project, runs, journals):
     seeds = {seed for _, _, seed, _ in files}
     signatures = {sig for _, _, _, sig in files}
     matching = defaultdict(list)
-    games, evaluations, available = set(), set(), set()
+    games, available = set(), set()
+    evaluations = defaultdict(list)
     paths = {r.as_posix(): e['id'] for r, e, _, _ in journals}
     for name in sorted({p.name.split('.')[0] for p in archive.games.glob('*.json*') if not p.name.startswith('.')}):
         r = archive.read(name)
@@ -52,7 +99,8 @@ def reconcile_replays(project, runs, journals):
         if r['category'] == 'training':
             games.add(_coverage(paths.get(who, who), p.get('game'), r['initial'].get('seed'), r['result']))
         elif r['category'] == 'evaluation':
-            evaluations.add((p.get('suite_id', p.get('experiment')), p.get('candidate_id'), str(p.get('game_id', p.get('game')))))
+            key = p.get('suite_id', p.get('experiment')), p.get('candidate_id'), str(p.get('game_id', p.get('game')))
+            evaluations[key].append(_evaluation_evidence(r['initial'], r['seats'], r['result']))
         if digest(r['initial']) in seeds:
             signature = _record_signature(r)
             if signature in signatures:
@@ -76,7 +124,7 @@ def reconcile_replays(project, runs, journals):
                     and str(provenance.get('game')) == game_id)):
                 matched = True
                 break
-        if not matched:
+        if not matched or info['category'] == 'evaluation':
             game = brass.Game(c['initial']['seed']) if 'seed' in c['initial'] else brass.Game.from_json(c['initial']['start_state'])
             for ply in c['moves']:
                 if game.is_over() or ply['player'] != game.current_player():
@@ -85,25 +133,36 @@ def reconcile_replays(project, runs, journals):
             if not game.is_over():
                 incomplete.append(str(path.relative_to(project)))
                 continue
+            result = outcome(game)
+            if matched and record['result'] != result:
+                raise ValueError('archive outcome disagrees with native exemplar: '+str(path))
+        else:
+            result = record['result']
+        if info['category'] == 'evaluation':
+            row = json.loads((path.parent.parent/'games'/path.name).read_bytes())
+            evidence = _evaluation_evidence(c['initial'], c['seats'], result)
+            if _matches_outcome(row, evidence):
+                evaluations[(info.get('suite_id'), info.get('candidate_id'), game_id)].append(evidence)
+            else:
+                info = dict(category='legacy', game=path.stem)
+        if not matched:
             name = digest(c)
             p = dict(info, imported=True, sources=[dict(path=str(path), sha256=sha, provenance=info)])
             record = dict(c, format=FORMAT, game_id=name, engine_id=engine_id(), provenance=p,
                           category=info['category'], created_at=datetime.now(timezone.utc).isoformat(),
-                          status='completed', result=outcome(game), seat_identities=seat_identities(c['seats'], legacy=True))
+                          status='completed', result=result, seat_identities=seat_identities(c['seats'], legacy=True))
             with writer_lock(archive.root/'locks'/('transfer-'+name)):
                 count += int(archive.publish(record))
             matching[signature].append(name)
             available.add(name)
         if info['category'] == 'training':
             games.add(_coverage(who, game_id, c['initial'].get('seed'), record['result']))
-        elif info['category'] == 'evaluation':
-            evaluations.add((info.get('suite_id'), info.get('candidate_id'), game_id))
     missing_eval = set()
     for run in runs:
         for path in (run/'evaluation').glob('**/games/*.json'):
             game = json.loads(path.read_bytes())
             key = game.get('suite_id'), game.get('candidate_id'), str(game.get('game_id'))
-            if key not in evaluations:
+            if not any(_matches_outcome(game, evidence) for evidence in evaluations.get(key, ())):
                 missing_eval.add(str(path.relative_to(project)))
     missing, missing_ids = set(), set()
     for run, experiment, update, journal in journals:

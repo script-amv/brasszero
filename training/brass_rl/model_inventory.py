@@ -8,8 +8,7 @@ from pathlib import Path
 import os
 import tempfile
 
-from .config import BC_LEARNER, TrainConfig
-from .experiments import atomic, encoded, link_or_copy, read_experiment, sync_dir
+from .experiments import atomic, encoded, library_intent, link_or_copy, read_experiment, sync_dir
 from .transfer import _policy, digest, file_hash, read
 
 SECTIONS = ('models', 'other_preserved_snapshots', 'unavailable_preserved_snapshots')
@@ -94,25 +93,21 @@ class Inventory:
                 self.checkpoints[occurrence['branch_id'], occurrence['update']] = occurrence
         self.locations = None
 
-    def register(self, run, locations=None):
+    def register(self, run, locations=None, *, destination=None):
         exp = read_experiment(run)
         identity = exp['id']
         parent = exp.get('parent')
-        intent = exp.get('library_intent', 'experimental')
-        if intent not in ('mainline', 'experimental'):
-            raise ValueError('unknown portable library intent')
-        if intent == 'mainline' and (not parent or exp.get('learner') != BC_LEARNER or exp.get('mode') != 'bc-current'
-                or TrainConfig.from_json(run/'config.json').learner != BC_LEARNER):
-            raise ValueError('mainline intent requires the supported BC continuation profile')
+        intent = library_intent(run, exp)
         verified = None
         if parent:
-            owner = self.registry['branches'].get(parent['experiment_id'], {}).get('run')
-            if not owner and locations is None:
-                if self.locations is None:
+            if locations is not None:
+                owner = locations.get(parent['experiment_id'])
+            else:
+                known = self.registry['branches'].get(parent['experiment_id'], {}).get('run')
+                if not known and self.locations is None:
                     from .transfer import experiments_under
                     self.locations = experiments_under(self.project/'training/runs')
-                locations = self.locations
-            owner = self.project/owner if owner else (locations or {}).get(parent['experiment_id'])
+                owner = self.project/known if known else self.locations.get(parent['experiment_id'])
             if owner:
                 boundary = owner/'updates'/('%06d' % parent['update'])
                 if (boundary/'manifest.json').is_file():
@@ -123,28 +118,37 @@ class Inventory:
                             or parent.get('policy_sha256', envelope['content_hashes']['policy.pt'])
                                != envelope['content_hashes']['policy.pt']):
                         raise ValueError('parent checkpoint provenance conflict')
-                    verified = _parent_ref(parent)
+                    base = run/'updates'/boundary.name
+                    if exp['base_update'] == parent['update'] and (base/'manifest.json').exists():
+                        actor, _ = _policy(base)
+                        if actor['id'] == meta['id'] and actor['update'] == parent['update']:
+                            verified = _parent_ref(parent)
         branch = self.registry['branches'].setdefault(identity, {})
         if branch.get('parent') and verified and branch['parent'] != verified:
             raise ValueError('branch parent provenance conflict')
         if branch.get('declaration_sha256') not in (None, file_hash(run/'experiment.json')):
             raise ValueError('experiment declaration conflict')
         branch.update(experiment_id=identity, label=exp.get('stability_arm') or ('BC continuation' if exp['mode'] == 'bc-current' else run.name),
-                      run=run.relative_to(self.project).as_posix(), parent=verified or branch.get('parent'),
+                      run=(destination or run).relative_to(self.project).as_posix(), parent=verified,
+                      library_intent=intent,
                       declaration_sha256=file_hash(run/'experiment.json'), base_update=exp['base_update'])
         return exp
 
-    def publish(self, source, *, run=None, experiment=None, checkpoint=None):
+    def publish(self, source, *, run=None, experiment=None, checkpoint=None, preflight=False):
         meta, manifest = _policy(source)
         identity = meta['id']
         update = meta['update']
         sha = None
         if checkpoint is not None:
-            envelope = read(checkpoint/'manifest.json')
-            if (envelope.get('update') != update or checkpoint.name != '%06d' % update
+            actor, envelope = _policy(checkpoint) if checkpoint != source else (meta, manifest)
+            if (actor['id'] != identity or envelope.get('update') != update or checkpoint.name != '%06d' % update
                     or any(envelope['content_hashes'][n] != manifest['content_hashes'][n] for n in ('metadata.json', 'policy.pt'))):
                 raise ValueError('checkpoint and playable policy disagree')
             sha = file_hash(checkpoint/'manifest.json')
+        if experiment:
+            self.record(experiment, update, identity, sha)
+        if preflight:
+            return
         prior = self.rows.get(identity)
         directory = self.project/'players/models'
         public = directory/('policy-'+identity.split(':')[-1])
@@ -211,6 +215,8 @@ class Inventory:
                 self.registry['occurrences'][identity] = [dict(_ref(None, update, identity, None),
                                                               branch_id=branch, lineage='experimental')]
             return
+
+    def record(self, experiment, update, identity, sha):
         if experiment.get('parent') and update < experiment['parent']['update']:
             return  # Copied pre-fork history belongs to its original experiment.
         exp = experiment['id']
@@ -227,15 +233,36 @@ class Inventory:
         tip = self.registry['mainline_tip']
         if tip and (tip['policy_id'], tip['experiment_id']) == (identity, exp) and sha:
             tip['checkpoint_sha256'] = sha
-        if sha and tip and update == tip['update']+1:
-            branch = self.registry['branches'][exp]
+
+    def continuation_candidates(self):
+        tip = self.registry['mainline_tip']
+        if not tip or not tip['checkpoint_sha256']:
+            return []
+        update = tip['update']+1
+        candidates = []
+        for exp, branch in self.registry['branches'].items():
+            occurrence = self.checkpoints.get((exp, update))
+            if not occurrence or not occurrence['checkpoint_sha256']:
+                continue
             local_resume = branch.get('adopted_continuation') and tip['experiment_id'] == exp
-            portable_intent = experiment.get('library_intent') == 'mainline'  # Profile validated at registration.
-            previous = self.predecessor(exp, update)
-            fork_from_tip = (branch['parent'] == tip and previous is not None
-                             and previous['policy_id'] == tip['policy_id'])
-            if (local_resume or portable_intent) and (previous == tip or fork_from_tip):
-                self.accept(occurrence)
+            portable_intent = branch.get('library_intent') == 'mainline'
+            if local_resume or portable_intent:
+                previous = self.predecessor(exp, update)
+                fork_from_tip = (branch['parent'] == tip and previous is not None
+                                 and previous['policy_id'] == tip['policy_id'])
+                if previous == tip or fork_from_tip:
+                    candidates.append(occurrence)
+        return sorted(candidates, key=lambda o: o['experiment_id'])
+
+    def advance(self):
+        """Advance after discovery so neither directory ordering nor duplicate weight IDs break ties."""
+        candidates = self.continuation_candidates()
+        while len(candidates) == 1:
+            self.accept(candidates[0])
+            candidates = self.continuation_candidates()
+        unresolved = [_ref(o['experiment_id'], o['update'], o['policy_id'], o['checkpoint_sha256']) for o in candidates]
+        self.registry['ambiguous_continuations'] = unresolved
+        return unresolved
 
     def predecessor(self, exp, update):
         old = self.checkpoints.get((exp, update-1))

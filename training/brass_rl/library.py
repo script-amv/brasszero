@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Canonical local model and replay library registration. Never restores a trainer."""
-from contextlib import ExitStack
+from contextlib import ExitStack, nullcontext
 import json
 import os
 from pathlib import Path
@@ -8,8 +8,8 @@ import subprocess
 import sys
 
 from .experiments import project_for, read_experiment, writer_lock
-from .model_inventory import inventory_writer
-from .transfer import experiments_under, read
+from .model_inventory import _parent_ref, inventory_writer
+from .transfer import _policy, experiments_under, file_hash, read
 
 
 def register_publication(project, run, exports, *, include_evaluation=False):
@@ -21,6 +21,7 @@ def register_publication(project, run, exports, *, include_evaluation=False):
         if include_evaluation:
             for path in (run/'evaluation/policies').glob('*/metadata.json'):
                 inventory.publish(path.parent)
+        inventory.advance()
 
 
 def launch_intent(source, experimental=False):
@@ -29,7 +30,6 @@ def launch_intent(source, experimental=False):
         path = project/'players/models/lineage.json'
         if path.is_file():
             from .experiments import parent_identity
-            from .model_inventory import _parent_ref
             if read(path)['mainline_tip'] == _parent_ref(parent_identity(source)):
                 return 'mainline'
     return 'experimental'
@@ -42,13 +42,40 @@ def adopt_mainline(project, checkpoint, *, expected_tip):
         raise ValueError('adoption requires a numeric checkpoint in the destination project')
     run = checkpoint.parent.parent
     exp = read_experiment(run)['id']
-    with writer_lock(run), inventory_writer(project) as inventory:
+    # Lock every registered ancestor that may be read before the shared catalog, in import order.
+    locations = experiments_under(project/'training/runs')
+    owners = set()
+    owner = run
+    while owner is not None and owner not in owners:
+        owners.add(owner)
+        owner = locations.get((read_experiment(owner).get('parent') or {}).get('experiment_id'))
+    with ExitStack() as locks:
+        for owner in sorted(owners):
+            locks.enter_context(writer_lock(owner))
+        inventory = locks.enter_context(inventory_writer(project))
         chosen = inventory.checkpoints.get((exp, int(checkpoint.name)))
-        from .experiments import parent_identity
-        from .model_inventory import _parent_ref
-        selected = _parent_ref(parent_identity(checkpoint))
-        if chosen is None or any(chosen[k] != v for k, v in selected.items()):
+        declarations = {}
+        for owner in owners:
+            declaration = read_experiment(owner)
+            declarations[declaration['id']] = declaration, file_hash(owner/'experiment.json')
+
+        def verify_reference(reference):
+            identity, number = reference['experiment_id'], reference['update']
+            if identity not in declarations:
+                raise ValueError('unresolved or changed ancestor experiment')
+            branch = inventory.registry['branches'][identity]
+            if declarations[identity][1] != branch.get('declaration_sha256'):
+                raise ValueError('registered experiment declaration changed')
+            path = locations[identity]/'updates'/('%06d' % number)
+            policy, envelope = _policy(path)
+            if (policy['id'] != reference['policy_id'] or envelope.get('update') != number
+                    or file_hash(path/'manifest.json') != reference['checkpoint_sha256']):
+                raise ValueError('registered checkpoint reference disagrees with verified payload')
+
+        if chosen is None:
             raise ValueError('reconcile the selected checkpoint before adoption')
+        selected = {k: chosen[k] for k in ('experiment_id', 'policy_id', 'update', 'checkpoint_sha256')}
+        verify_reference(selected)
         tip = inventory.registry['mainline_tip']
         branch = inventory.registry['branches'][exp]
         if selected == tip:
@@ -65,27 +92,39 @@ def adopt_mainline(project, checkpoint, *, expected_tip):
             occurrence = inventory.checkpoints.get(key)
             if key in visited or occurrence is None or any(occurrence[k] != v for k, v in cursor.items()):
                 raise ValueError('missing or conflicting checkpoint on adoption path')
+            if cursor != selected:
+                verify_reference(cursor)
             visited.add(key)
             chain.append(occurrence)
             branch = inventory.registry['branches'][key[0]]
-            if branch['parent'] and key[1] == branch['parent']['update']:
-                cursor = branch['parent']
+            declaration = declarations[key[0]][0]
+            parent_claim = declaration.get('parent')
+            if (parent_claim or declaration.get('historical_parent')) and key[1] <= declaration['base_update']:
+                parent = branch['parent']
+                if (not parent_claim or not parent or parent != _parent_ref(parent_claim)
+                        or key[1] != parent['update'] or cursor['policy_id'] != parent['policy_id']):
+                    raise ValueError('no verified actor-preserving parent at the activation boundary')
+                cursor = parent
             else:
                 cursor = inventory.predecessor(*key)
             if cursor is None and (tip is not None or key[1] != 0):
                 raise ValueError('no verified predecessor connecting the selected checkpoint to the tip')
+        if tip:
+            verify_reference(tip)
         inventory.registry['branches'][exp]['adopted_continuation'] = True
         for occurrence in reversed(chain):
             inventory.accept(occurrence)
+        inventory.registry['ambiguous_continuations'] = []
         return dict(mainline_tip=inventory.registry['mainline_tip'], adopted=len(chain))
 
 
-def reconcile_models(project, locations, runs, public_only=()):
+def reconcile_models(project, locations, runs, public_only=(), *, inventory=None, destinations=None):
     """Run locks precede the catalog lock. Inputs may be sparse historical journals."""
     journals = []
-    with inventory_writer(project) as inventory:
+    preflight = destinations is not None
+    with (nullcontext(inventory) if inventory is not None else inventory_writer(project)) as inventory:
         for run in runs:
-            experiment = inventory.register(run, locations)
+            experiment = inventory.register(run, locations, destination=destinations[run] if preflight else None)
             updates = {p.name: p for p in (run/'updates').glob('[0-9]*') if p.name.isdecimal()}
             policies = {p.name: p for p in (run/'policies').glob('[0-9]*') if p.name.isdecimal()}
             for name in sorted(updates.keys() | policies.keys()):
@@ -93,9 +132,8 @@ def reconcile_models(project, locations, runs, public_only=()):
                 source = policies.get(name) or boundary
                 if name != '%06d' % read(source/'metadata.json')['update']:
                     raise ValueError('source policy update mismatch')
-                inventory.publish(source, run=run, experiment=experiment, checkpoint=boundary)
-                if boundary:
-                    from .transfer import file_hash
+                inventory.publish(source, run=run, experiment=experiment, checkpoint=boundary, preflight=preflight)
+                if boundary and not preflight:
                     if file_hash(boundary/'manifests.json') != read(boundary/'manifest.json')['content_hashes']['manifests.json']:
                         raise ValueError('journal hash mismatch')
                     journal = read(boundary/'manifests.json')
@@ -104,10 +142,13 @@ def reconcile_models(project, locations, runs, public_only=()):
                                     train=[{k: g[k] for k in ('game_id', 'deal_seed', 'outcome') if k in g}
                                            for g in journal.get('train', [])])
                     journals.append((run, experiment, int(name), coverage))
+        if preflight:
+            return
+        ambiguous = inventory.advance()
         for source in public_only:
             inventory.publish(source)
         return dict(models=len(inventory.rows), added_models=inventory.added,
-                    reused_models=len(inventory.public)-inventory.added), journals
+                    reused_models=len(inventory.public)-inventory.added, ambiguous_continuations=ambiguous), journals
 
 
 def reconcile_library(project: Path, *, runs=None) -> dict:
