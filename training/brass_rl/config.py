@@ -138,6 +138,9 @@ class RuntimeConfig:
                 _number("runtime." + name, getattr(self, name))
 
 
+BC_LEARNER = "brass-bc/1"
+
+
 _SECTIONS = {"model": ModelConfig, "ppo": PPOConfig, "league": LeagueConfig,
              "eval": EvalConfig, "runtime": RuntimeConfig}
 
@@ -153,6 +156,7 @@ def _from_mapping(cls, payload, name):
 
 @dataclass(frozen=True)
 class TrainConfig:
+    learner = None  # Legacy configs retain their original serialized fields.
     model: ModelConfig = field(default_factory=ModelConfig)
     ppo: PPOConfig = field(default_factory=PPOConfig)
     league: LeagueConfig = field(default_factory=LeagueConfig)
@@ -175,10 +179,31 @@ class TrainConfig:
     @classmethod
     def from_json(cls, path: Path) -> "TrainConfig":
         payload = json.loads(path.read_text(encoding="utf-8"))
+        return cls.from_mapping(payload)
+
+    @classmethod
+    def from_mapping(cls, payload):
         if not isinstance(payload, dict):
             raise ValueError("train config must be a JSON object")
         converted = dict(payload)
         for name, section in _SECTIONS.items():
             if name in converted:
                 converted[name] = _from_mapping(section, converted[name], name)
-        return _from_mapping(cls, converted, "train config")
+        return _from_mapping(BCConfig if "learner" in converted else cls, converted, "train config")
+
+
+_BC_PPO = PPOConfig(reward="score", critic_target="terminal", target_kl=.05)
+
+
+@dataclass(frozen=True)
+class BCConfig(TrainConfig):
+    """Versioned supported BC learner. Ordinary and study configs keep their v1 identities."""
+    learner: str = BC_LEARNER
+    games_per_update: int = 8
+    ppo: PPOConfig = _BC_PPO
+
+    def __post_init__(self):
+        super().__post_init__()
+        if (self.learner != BC_LEARNER or self.ppo != _BC_PPO or self.league != LeagueConfig()
+                or self.games_per_update != 8):
+            raise ValueError("brass-bc/1 requires eight games, BC PPO at KL .05 and the sampled BC league")

@@ -79,6 +79,31 @@ def read_experiment(run):
     return value
 
 
+def parent_identity(source):
+    meta = json.loads((source/'metadata.json').read_bytes())
+    manifest = (source/'manifest.json').read_bytes()
+    return {'experiment_id': read_experiment(source.parent.parent)['id'], 'update': meta['update'],
+            'checkpoint_sha256': hashlib.sha256(manifest).hexdigest(),
+            'model_id': meta['id'], 'policy_sha256': json.loads(manifest)['content_hashes']['policy.pt']}
+
+
+def same_state(a, b):
+    """Exact tensor, RNG tuple and Adam slot comparisons across serialization."""
+    import numpy as np
+    import torch
+    if type(a) is not type(b):
+        return False
+    if isinstance(a, torch.Tensor):
+        return a.dtype == b.dtype and torch.equal(a, b)
+    if isinstance(a, np.ndarray):
+        return a.dtype == b.dtype and np.array_equal(a, b)
+    if isinstance(a, dict):
+        return a.keys() == b.keys() and all(same_state(a[k], b[k]) for k in a)
+    if isinstance(a, (tuple, list)):
+        return len(a) == len(b) and all(same_state(x, y) for x, y in zip(a, b))
+    return a == b
+
+
 def ensure_experiment(run, config, *, state=None, parent=None):
     run = Path(run)
     if (run/'experiment.json').exists():
@@ -161,6 +186,8 @@ def branch_experiment(checkpoint, destination):
                    'created_at': datetime.now(timezone.utc).isoformat(),
                    'producer': {'system': platform.system(), 'machine': platform.machine(), 'python': platform.python_version()},
                    'historical_gaps': metadata.get('historical_gaps', [])}
+            if loaded.state.config.learner:
+                own['learner'] = loaded.state.config.learner
             atomic(temporary/'experiment.json', encoded(own))
             atomic(temporary/'config.json', encoded(asdict(loaded.state.config)))
             sync_tree(temporary)
@@ -174,7 +201,9 @@ def branch_experiment(checkpoint, destination):
 
 
 def preflight(run, metadata, state, policy, *, resumed, notes):
-    return {'event': 'preflight', 'experiment_id': metadata['id'], 'mode': metadata['mode'],
+    profile = ({'learner': state.config.learner, 'critic_optimizer': 'restored',
+                'loss_priority_next_game_id': state.loss_priority['next_game_id']} if state.config.learner else {})
+    return {**profile, 'event': 'preflight', 'experiment_id': metadata['id'], 'mode': metadata['mode'],
             'checkpoint': str(Path(run)/'updates'/('%06d' % state.completed_updates)),
             'last_completed_update': state.completed_updates, 'completed_training_games': state.next_game_id,
             'model_id': policy, 'restoration': 'full-state' if resumed else 'initialized',

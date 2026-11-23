@@ -50,6 +50,7 @@ class RunState:
     rng_states: Optional[Mapping[str, Any]] = None
 
     dynamic_league: Optional[Mapping[str, Any]] = None
+    loss_priority: Optional[Mapping[str, Any]] = None
 
     @property
     def league_snapshot_ids(self):
@@ -158,13 +159,6 @@ def _pointer(run_dir, name, target):
         temporary.unlink(missing_ok=True)
 
 
-def _config(payload):
-    payload = dict(payload)
-    for name, cls in _SECTIONS.items():
-        payload[name] = cls(**payload[name])
-    return TrainConfig(**payload)
-
-
 def _compatible_config(saved, requested):
     a, b = asdict(saved), asdict(requested)
     # Runtime device, wall time and checkpoint margin are operational overrides.
@@ -179,6 +173,13 @@ def _compatible_config(saved, requested):
 
 def restore_league(state):
     streams = SeedStreams(state.master_seed)
+    if state.config.learner or state.loss_priority is not None:
+        from .loss_priority import LossPriorityLeague
+        if not state.config.learner or state.dynamic_league is not None or state.loss_priority is None:
+            raise ValueError("loss-priority state and supported learner must match")
+        return LossPriorityLeague.from_checkpoint(streams, state.league_snapshots, state.config.league,
+                                                  state.holdouts, state.league_history,
+                                                  state.loss_priority, state.next_game_id)
     if state.dynamic_league is not None:
         from .dynamic_league import DynamicLeague
         if state.dynamic_league['next_game_id'] != state.next_game_id:
@@ -190,7 +191,8 @@ def restore_league(state):
 
 
 def _verify_league(state):
-    if state.league_snapshots or state.holdouts or state.league_history or state.dynamic_league is not None:
+    if (state.config.learner or state.loss_priority is not None or state.league_snapshots or state.holdouts
+            or state.league_history or state.dynamic_league is not None):
         try:
             restore_league(state)
         except (OSError, ValueError, KeyError, TypeError) as exc:
@@ -245,6 +247,8 @@ def _controller(state, records, rng):
         controller["stability_arm"] = state.manifests["stability_arm"]
     if state.dynamic_league is not None:
         controller["dynamic_league"] = dict(state.dynamic_league)
+    if state.loss_priority is not None:
+        controller["loss_priority"] = state.loss_priority
     return controller
 
 
@@ -359,7 +363,10 @@ def save_update(run_dir: Path, model, optimizer, state: RunState, *, inherited_p
             raise ArtifactError("optimizer requires one parameter group in canonical model order")
         _validate_optimizer(model, optimizer.state_dict(), state.config.ppo.learning_rate)
         arm = state.manifests.get("stability_arm")
-        if arm == "candidate":
+        if (state.manifests.get("learner") != state.config.learner or
+                (state.config.learner and arm is not None)):
+            raise ArtifactError("learner declaration differs between config and manifest")
+        if arm == "candidate" or state.config.learner:
             from .stability_checkpoint import pack
             optimizer_payload = pack(model, optimizer, critic, critic_optimizer, state.config.ppo.learning_rate)
         elif arm in (None, "control") and critic is None and critic_optimizer is None:
@@ -441,7 +448,9 @@ def save_update(run_dir: Path, model, optimizer, state: RunState, *, inherited_p
 
 def _checkpoint_state(path, manifest, payload, model, metadata, config):
     controller = torch.load(io.BytesIO(payload["controller.pt"]), map_location="cpu", weights_only=False)
-    saved_config = _config(controller["config"])
+    if not _SECTIONS.keys() <= controller["config"].keys():
+        raise ArtifactError("checkpoint configuration lacks required training sections")
+    saved_config = TrainConfig.from_mapping(controller["config"])
     if config is not None:
         _compatible_config(saved_config, config)
     snapshots = manifest["snapshots"]
@@ -459,8 +468,11 @@ def _checkpoint_state(path, manifest, payload, model, metadata, config):
                      development_best_id=controller["development_best_id"],
                      metrics=tuple(read_json(path / "metrics.json")["records"]),
                      manifests=read_json(path / "manifests.json"), league_history=controller["league_history"],
-                     rng_states=controller["rng_states"], dynamic_league=controller.get("dynamic_league"))
+                     rng_states=controller["rng_states"], dynamic_league=controller.get("dynamic_league"),
+                     loss_priority=controller.get("loss_priority"))
     arm = state.manifests.get("stability_arm")
+    if state.manifests.get("learner") != state.config.learner or (state.config.learner and arm is not None):
+        raise ArtifactError("learner declaration differs between config and manifest")
     if (controller.get("stability_arm") != arm or arm not in (None, "control", "candidate")
             or ("stability_arm" in controller) != ("stability_arm" in state.manifests)):
         raise ArtifactError("stability arm differs between controller and committed manifest")
@@ -501,7 +513,7 @@ def load_update(path: Path, device: str = "cpu", config: Optional[TrainConfig] =
         optimizer_state = torch.load(io.BytesIO(payload["optimizer.pt"]), map_location=device, weights_only=False)
         model.to(device).train().requires_grad_(True)
         critic = critic_adam = None
-        if state.manifests.get("stability_arm") == "candidate":
+        if state.config.learner or state.manifests.get("stability_arm") == "candidate":
             from .stability_checkpoint import unpack
             optimizer_state, critic, critic_adam = unpack(model, optimizer_state, state.config.ppo.learning_rate)
         elif "format" in optimizer_state:

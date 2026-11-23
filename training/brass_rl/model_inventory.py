@@ -5,7 +5,8 @@ import json
 from datetime import date
 
 from .experiments import atomic, read_experiment
-from .main_bc import DESTINATION, source_parent
+from .config import BC_LEARNER
+from .main_bc import CURRENT_DESTINATION, DESTINATION, source_parent
 
 SECTIONS = ('models', 'other_preserved_snapshots', 'unavailable_preserved_snapshots')
 
@@ -31,7 +32,9 @@ def update_inventory(project, run, exports):
     if not catalog.is_file():
         return
     experiment = read_experiment(run)
-    is_main = run.relative_to(project) == DESTINATION and experiment.get('parent') == source_parent()
+    relative = run.relative_to(project)
+    is_main = ((relative == DESTINATION and experiment.get('parent') == source_parent()) or
+               (relative == CURRENT_DESTINATION and experiment.get('learner') == BC_LEARNER))
     lock = project/'training/runs/.model-catalog.writer.lock'
     with lock.open('a+b') as stream:
         fcntl.flock(stream, fcntl.LOCK_EX)

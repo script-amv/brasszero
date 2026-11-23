@@ -29,6 +29,7 @@ from .evaluate import periodic_development
 from .replay import retain_training_replays, experiment_identity  # noqa: F401
 from .dynamic_league import DynamicLeague
 from .league import League, Snapshot, replay_identity
+from .loss_priority import LossPriorityLeague
 from .model import BrassPolicy
 from .policy_io import json_bytes, tensor_bytes, read_json
 from .experiments import ensure_experiment, preflight, project_for, writer_lock
@@ -134,6 +135,11 @@ def _stored_league(league, run_dir):
     def stored(snapshot):
         digest = history[snapshot.id]['sha256']
         return replace(snapshot, weights_path=run_dir/'weights'/(digest+'.pt'))
+    if isinstance(league, LossPriorityLeague):
+        exposure = league.state
+        return LossPriorityLeague.from_checkpoint(league.streams, tuple(stored(s) for s in league.snapshots),
+                                                  league.config, tuple(stored(s) for s in league.holdouts),
+                                                  history, exposure, exposure['next_game_id'])
     if isinstance(league, DynamicLeague):
         return DynamicLeague.restore(league.streams, tuple(stored(s) for s in league.snapshots),
                                      tuple(stored(s) for s in league.holdouts), history, league.state)
@@ -159,13 +165,13 @@ def _manifests(episodes, streams, notes):
 
 
 
-def update_recordings(archive, episodes, update, experiment, run_experiment, stability_arm):
+def update_recordings(archive, episodes, update, experiment, run_experiment, captured):
     """Resolve the actual collector recordings without loading historical games."""
-    if stability_arm and any(ep.replay_id is not None for ep in episodes):
+    if captured and any(ep.replay_id is not None for ep in episodes):
         records = []
         for ep in episodes:
             if ep.replay_id is None:
-                raise ValueError('missing captured stability replay ID')
+                raise ValueError('missing captured training replay ID')
             record = archive.read(ep.replay_id)
             info = record['provenance']
             if (record['game_id'] != ep.replay_id or record['category'] != 'training'
@@ -173,7 +179,7 @@ def update_recordings(archive, episodes, update, experiment, run_experiment, sta
                     or info.get('update') != update or info.get('game') != ep.game_id
                     or record['result']['vp'] != list(ep.result.vp)
                     or record['result']['ranking'] != list(ep.result.ranking)):
-                raise ValueError('captured stability recording disagrees with its collected game')
+                raise ValueError('captured training recording disagrees with its collected game')
             records.append(record)
         return records
     # Legacy callers and synthetic collectors without recorders use the old lookup.
@@ -201,6 +207,7 @@ def _state(config, master, shuffle, game_id, update, league, metrics=(), manifes
     return RunState(config=config, master_seed=master, controller_rng_states={'shuffle': shuffle.getstate()},
                     next_game_id=game_id, completed_updates=update, league_snapshots=league.snapshots,
                     holdouts=league.holdouts, league_history=league.history, development_best_id=best,
+                    loss_priority=league.state if isinstance(league, LossPriorityLeague) else None,
                     dynamic_league=league.state if isinstance(league, DynamicLeague) else None,
                     metrics=metrics, manifests=dict(manifests or {}, checkpoint_retention=ROLLING_POLICY))
 
@@ -220,6 +227,9 @@ def _train(config: TrainConfig, run_dir: Path, resume: Optional[Path] = None,
         raise ValueError("dynamic league activation requires a full historical checkpoint")
     if not isinstance(config, TrainConfig):
         raise ValueError('train requires a TrainConfig')
+    if config.learner and (resume is None or dynamic_members is not None or stability_arm is not None):
+        raise ValueError('supported BC requires activation from a full source and its own league')
+    independent = bool(config.learner) or stability_arm == 'candidate'
     ceiling = config.updates if max_updates is None else max_updates
     if type(ceiling) is not int or ceiling < 0:
         raise ValueError('max_updates must be a nonnegative absolute completed-update ceiling')
@@ -265,12 +275,9 @@ def _train(config: TrainConfig, run_dir: Path, resume: Optional[Path] = None,
             state, model, latest = loaded.state, loaded.model, loaded.path
             if state.manifests.get('stability_arm') != stability_arm:
                 raise ValueError('stability checkpoints require the matching train_stability arm')
-            if stability_arm == 'candidate':
-                from copy import deepcopy
-                critic = deepcopy(model)
-                critic.load_state_dict(loaded.critic_state)
-                critic_optimizer = torch.optim.Adam(critic.parameters(), lr=config.ppo.learning_rate)
-                critic_optimizer.load_state_dict(loaded.critic_optimizer_state)
+            if independent:
+                from .stability_checkpoint import independent_critic
+                critic, critic_optimizer = independent_critic(loaded)
             optimizer = torch.optim.Adam(model.parameters(), lr=config.ppo.learning_rate)
             optimizer.load_state_dict(loaded.optimizer_state)
             streams = SeedStreams(state.master_seed)
@@ -281,6 +288,8 @@ def _train(config: TrainConfig, run_dir: Path, resume: Optional[Path] = None,
             for note in notes:
                 warnings.warn(note, RuntimeWarning)
         experiment = ensure_experiment(run_dir, config, state=state)
+        if config.learner != experiment.get('learner'):
+            raise ValueError('experiment learner declaration differs from requested config')
         if experiment.get('stability_arm') != stability_arm:
             raise ValueError('stability experiment declaration differs from resume mode')
         from .main_bc import DESTINATION, source_parent
@@ -288,6 +297,8 @@ def _train(config: TrainConfig, run_dir: Path, resume: Optional[Path] = None,
         canonical = (project is not None and run_dir == project/DESTINATION and
                      experiment.get("parent") == source_parent())
         activation = run_dir/'dynamic-activation.json'
+        if config.learner and activation.exists():
+            raise ValueError('dynamic activation is incompatible with supported BC')
         first_activation = False
         effective = state
         if state.dynamic_league is None and (activation.exists() or dynamic_members is not None):
@@ -344,7 +355,7 @@ def _train(config: TrainConfig, run_dir: Path, resume: Optional[Path] = None,
             if frozen_ids != frozen_identities.keys():
                 raise ValueError('collected frozen replay snapshot is missing from the verified league')
             ppo_started = time.monotonic()
-            if stability_arm == 'candidate':
+            if independent:
                 from .stability import update_candidate
                 metrics_data = update_candidate(model, optimizer, critic, critic_optimizer, episodes, config.ppo, shuffle)
             elif stability_arm == 'control':
@@ -358,9 +369,10 @@ def _train(config: TrainConfig, run_dir: Path, resume: Optional[Path] = None,
             if not all(math.isfinite(value) for key, value in metrics_data.items() if key != 'actor_stop_reason'):
                 raise ValueError('PPO metrics must be finite; update was not published')
             update = state.completed_updates + 1
-            if isinstance(league, DynamicLeague):
+            if isinstance(league, (DynamicLeague, LossPriorityLeague)):
                 for episode in episodes:
                     league.record_training(episode.game_id, episode.lineup, episode.result.ranking)
+            if isinstance(league, DynamicLeague):
                 if canonical:
                     snapshot = None
                     if update % league.next_stride(update) == 0:
@@ -372,6 +384,8 @@ def _train(config: TrainConfig, run_dir: Path, resume: Optional[Path] = None,
             elif update % config.league.snapshot_interval_updates == 0:
                 league.add(_snapshot(model, raw_dir, update, 'training'))
             manifests = _manifests(episodes, streams, notes)
+            if config.learner:
+                manifests['learner'] = config.learner
             if stability_arm is not None:
                 manifests['stability_arm'] = stability_arm
             record = {'update': update, 'first_game_id': state.next_game_id,
@@ -388,7 +402,7 @@ def _train(config: TrainConfig, run_dir: Path, resume: Optional[Path] = None,
             from brass_ai.replay_archive import Archive
             manifests['experiment_id'] = experiment['id']
             replay_experiment = experiment.get('legacy_replay_identity',experiment['id'])
-            recordings = update_recordings(Archive(), episodes, update, replay_experiment, experiment['id'], stability_arm)
+            recordings = update_recordings(Archive(), episodes, update, replay_experiment, experiment['id'], config.learner or stability_arm)
             recorded_games = [r['provenance'].get('game') for r in recordings if r['category']=='training']
             if (len(set(recorded_games))!=len(recorded_games) or
                     not set(recorded_games)<={ep.game_id for ep in episodes}):
@@ -396,7 +410,7 @@ def _train(config: TrainConfig, run_dir: Path, resume: Optional[Path] = None,
             manifests['replay_ids'] = [r['game_id'] for r in recordings]
             state = _state(config, state.master_seed, shuffle, state.next_game_id+len(episodes), update,
                            league, (record,), manifests, best)
-            if stability_arm == 'candidate':
+            if independent:
                 latest = save_update(run_dir, model, optimizer, state, critic=critic, critic_optimizer=critic_optimizer)
             else:
                 latest = save_update(run_dir, model, optimizer, state)

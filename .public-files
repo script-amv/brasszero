@@ -226,6 +226,7 @@ training/brass_rl/__init__.py
 training/brass_rl/__main__.py
 training/brass_rl/agent.py
 training/brass_rl/artifacts.py
+training/brass_rl/bc_current.py
 training/brass_rl/board_cache.py
 training/brass_rl/bounded.py
 training/brass_rl/combination_evaluation.py
@@ -243,7 +244,9 @@ training/brass_rl/graph_ops.py
 training/brass_rl/league.py
 training/brass_rl/league_activation.py
 training/brass_rl/league_study.py
+training/brass_rl/learner_fork.py
 training/brass_rl/learning_study.py
+training/brass_rl/loss_priority.py
 training/brass_rl/main_bc.py
 training/brass_rl/model.py
 training/brass_rl/model_inventory.py
@@ -268,6 +271,7 @@ training/brass_rl/stability_study.py
 training/brass_rl/train.py
 training/brass_rl/transfer.py
 training/brass_rl/transport_coverage.py
+training/configs/bc-current.json
 training/configs/free-cloud.json
 training/configs/gae-study.json
 training/configs/local-smoke.json
@@ -294,6 +298,7 @@ training/tests/conftest.py
 training/tests/helpers.py
 training/tests/test_agent.py
 training/tests/test_artifacts.py
+training/tests/test_bc_current.py
 training/tests/test_board_cache.py
 training/tests/test_bounded.py
 training/tests/test_combination_study.py

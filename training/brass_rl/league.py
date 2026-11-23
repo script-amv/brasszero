@@ -203,7 +203,11 @@ class League:
         eligible = tuple(LineupEntry("frozen", s.id) for s in self._pool)
         if draw >= self_play + frozen:
             eligible += (LineupEntry("random"), LineupEntry("greedy"))
-        return Lineup(tuple(current if s == focal else rng.choice(eligible) for s in range(4)))
+        opponents = iter(self._opponents(rng, eligible))
+        return Lineup(tuple(current if seat == focal else next(opponents) for seat in range(4)))
+
+    def _opponents(self, rng, eligible):
+        return [rng.choice(eligible) for _ in range(3)]
 
 
 def replay_identity(snapshot_id, record):

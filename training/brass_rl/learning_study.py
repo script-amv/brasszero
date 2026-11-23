@@ -13,7 +13,7 @@ import time
 
 from .bounded import GIB, MIB, caffeinate, disk_bytes
 from .config import TrainConfig
-from .experiments import (atomic, encoded, ensure_experiment, link_or_copy, read_experiment,
+from .experiments import (atomic, encoded, ensure_experiment, link_or_copy, parent_identity, read_experiment, same_state,
                           sync_dir, writer_lock)
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -40,30 +40,6 @@ def fixed(path, value):
             raise ValueError('immutable study declaration changed: '+str(path))
     else:
         write(path, value)
-
-
-def parent_identity(source):
-    meta = read(source/'metadata.json')
-    return {'experiment_id': read_experiment(source.parent.parent)['id'], 'update': meta['update'],
-            'checkpoint_sha256': hashlib.sha256((source/'manifest.json').read_bytes()).hexdigest(),
-            'model_id': meta['id'], 'policy_sha256': read(source/'manifest.json')['content_hashes']['policy.pt']}
-
-
-def same_state(a, b):
-    """Exact tensor, RNG tuple and Adam slot comparisons across serialization."""
-    import numpy as np
-    import torch
-    if type(a) is not type(b):
-        return False
-    if isinstance(a, torch.Tensor):
-        return a.dtype == b.dtype and torch.equal(a, b)
-    if isinstance(a, np.ndarray):
-        return a.dtype == b.dtype and np.array_equal(a, b)
-    if isinstance(a, dict):
-        return a.keys() == b.keys() and all(same_state(a[k], b[k]) for k in a)
-    if isinstance(a, (tuple, list)):
-        return len(a) == len(b) and all(same_state(x, y) for x, y in zip(a, b))
-    return a == b
 
 
 def fork_arm(source, dest, lam, *, learning_rate=None, study_config=None, dynamic_members=None):

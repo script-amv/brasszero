@@ -26,6 +26,25 @@ Seats and places start at 1. `AI` marks each trainable seat; self-play displays 
 
 On Mac, lines appear in the training terminal. To retain them, append `2>&1 | tee -a training.log` to the existing training command in Bash or Zsh with `set -o pipefail`; another terminal can use `tail -f training.log`. The checkpoint manifests and replay archive remain the authoritative records if console output is interrupted.
 
+### Continue BC training
+
+Use `train-bc` for the supported `brass-bc/1` learner. Set `SOURCE` to a trusted, full numeric checkpoint directory and select a new run. For example, the first command activates from update 4071 without playing any games. The second advances to update 4072, collecting eight complete games. The absolute ceiling always counts completed updates.
+
+```sh
+export PYTHONPATH="$PWD/engine/tools:$PWD/training:$PWD/players/search"
+run=training/runs/bc-current
+training/.venv/bin/python -m brass_rl train-bc --source "$SOURCE" --out "$run" --max-updates 4071
+training/.venv/bin/python -m brass_rl train-bc --resume latest --out "$run" --max-updates 4072
+```
+
+Activation preserves actor and optimizer, original seed streams, game and update counters, retained frozen membership, holdouts and immutable identity history. An independent source carries its critic weights and trained Adam moments into the child. A shared source starts the critic as an exact independent copy with fresh Adam. The new identity, parent digest, config changes, initialization checks and prior development selection are recorded in `experiment.json`. Earlier journals and recordings remain in the parent. The child begins its own journal and development selection at the activation boundary. A returned seed can also be resumed with `brass_rl train --config "$run/config.json" --out "$run" --resume latest --max-updates N`, replacing N with the absolute ceiling.
+
+The profile uses BC own-VP rewards, relative four-player terminal critic targets and actor GAE with gamma 1 and lambda .95. The actor takes decision-weighted steps on fragments from at most four distinct games. It runs up to four epochs, checking a representative cross-game KL after each actor step and full chronological decision-weighted KL after each completed actor epoch. Both thresholds are .05. The representative estimate can differ from full KL, and a completed step can overshoot the threshold. The independent critic runs all four epochs with its own Adam and public-history memory.
+
+The sampled lineup probabilities are 50% self-play, 35% frozen and 15% mixed. For each frozen identity, counts record twice the learner's wins plus ties and the total native-rank encounters. A duplicate frozen seat counts again. For a win score of one per win and half per tie, the smoothed probability is `p = (2 + score) / (4 + encounters)`. Frozen draw weights are `1 + 4*(1-p)^2`, normalized to sum to the active pool size. Mixed Random and Greedy each have weight one. Opponent seats draw with replacement. Counts and the game cursor commit once with the whole update. A source with no exposure starts empty. The eight-member retention and ten-update snapshot cadence continue.
+
+See `training/configs/bc-current.json` for the standard profile. Activation inherits the source's model, seed and operational settings. Generic untagged training continues using shared PPO. To continue the historical BC788 main line explicitly, use `train-bc --legacy --max-updates N`. Its optional `--dynamic-league` flag belongs to that historical route. New actors published under `training/runs/bc-current` enter the main-line catalog after the source boundary. Existing recommended policies retain their selection.
+
 ### Local PPO stability experiment
 
 For an explicitly authorized stability study, `brass_rl.stability_run.fork_stability(source, dest, candidate)` creates a compact run from a trusted numeric BC checkpoint and returns its new base checkpoint path. Pass `False` for the two-game shared-network control or `True` for the eight-game candidate. The parent manifest digest, configuration changes, initialization checks and runtime differences are recorded in `experiment.json`. Each new run retains the exact parent actor export, active league, counters, actor Adam and RNG state. Earlier history stays in the parent.

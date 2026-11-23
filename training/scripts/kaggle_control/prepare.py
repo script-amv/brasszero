@@ -62,6 +62,27 @@ def seed(project, output):
         write(output.with_suffix('.json'), summary)
 
 
+def seed_bc(source, output):
+    """Seal a new supported BC child from an explicitly selected full boundary."""
+    import torch
+    from brass_rl.bc_current import fork_bc
+    from brass_rl.experiments import writer_lock
+    from train_run import verify
+
+    output = Path(output)
+    summary_path = output.with_suffix('.json')
+    with writer_lock(output):
+        if summary_path == output or output.exists() or summary_path.exists():
+            raise ValueError('choose a new BC seed archive and summary path')
+        torch.set_num_threads(1)
+        with tempfile.TemporaryDirectory() as temp:
+            state = Path(temp)/'state'
+            fork_bc(source, state/'run')
+            summary = verify(state)
+            summary['sha256'] = seal(state, output)
+            write(summary_path, summary)
+
+
 def credentials(directory, run, expiry):
     runner, owner = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
     cap = dict(endpoint=trusted_endpoint(), run=run)
@@ -124,6 +145,8 @@ def prepare(state, summary_path, dest, slug, deadline, stage='resume', proof=Non
     frozen = read(proof/'job.json')['revision'] if stage == 'long' and proof is not None else 'HEAD'
     revision = subprocess.check_output(['git','rev-parse','--verify',frozen+'^{commit}'],cwd=ROOT,text=True).strip()
     previous = None
+    if summary.get('learner') and stage != 'resume':
+        raise ValueError('supported BC uses the resume stage and its own sealed source')
     if stage == 'proof' and (summary['update'] != BASE or summary['policy'] != POLICY or summary['replay_count']):
         raise ValueError('proof must start at the sealed 843 seed')
     if stage == 'long':
@@ -146,6 +169,8 @@ def prepare(state, summary_path, dest, slug, deadline, stage='resume', proof=Non
              'training/brass_rl','training/requirements/linux.txt',
              'training/scripts/kaggle_control/common.py','training/scripts/kaggle_control/job.py',
              'training/scripts/kaggle_control/train_run.py']
+    if summary.get('learner'):
+        paths.append('training/configs')
     with (data/'source.bin').open('xb') as out:
         subprocess.run(['git','archive','--format=tar.gz',revision]+paths, stdout=out, cwd=ROOT, check=True)
     if stage == 'long' and digest(data/'source.bin') != read(proof/'dataset/run-input.json')['files']['source.bin']:
@@ -190,6 +215,9 @@ if __name__ == '__main__':
     cmd = sub.add_parser('seed')
     cmd.add_argument('project', type=Path)
     cmd.add_argument('archive', type=Path)
+    cmd = sub.add_parser('seed-bc', help='activate a new supported BC run from an explicit full checkpoint')
+    cmd.add_argument('source', type=Path)
+    cmd.add_argument('archive', type=Path)
     cmd = sub.add_parser('prepare')
     for name in ('state','summary','directory'):
         cmd.add_argument(name, type=Path)
@@ -205,6 +233,8 @@ if __name__ == '__main__':
     args = parser.parse_args()
     if args.cmd == 'seed':
         seed(args.project.resolve(), args.archive.resolve())
+    elif args.cmd == 'seed-bc':
+        seed_bc(args.source.resolve(), args.archive.resolve())
     elif args.cmd == 'adopt-retry':
         from campaign import adopt_retry
         state = adopt_retry(args.original,args.retry)

@@ -46,7 +46,12 @@ def main(argv: Optional[List[str]] = None):
     coverage.add_argument('--recover', action='store_true', help='copy missing bytes to hash-named recovery objects')
     runtime = sub.add_parser('runtime', help='check optional numerical runtime')
     runtime.add_argument('--device', choices=('cpu', 'cuda', 'mps'), default='cpu')
-    bc = sub.add_parser('train-bc', help='continue the main BC experiment from its full state')
+    bc = sub.add_parser('train-bc', help='activate or resume eight-game BC with independent critic and loss-priority')
+    route = bc.add_mutually_exclusive_group(required=True)
+    route.add_argument('--source', type=Path, help='full numeric BC source checkpoint for a new experiment')
+    route.add_argument('--resume', choices=['latest'], help='resume the latest complete supported BC boundary')
+    route.add_argument('--legacy', action='store_true', help='continue the historical main-bc line from BC788')
+    bc.add_argument('--out', type=Path, help='supported experiment directory (required for --source or --resume)')
     bc.add_argument('--max-updates', type=int, required=True, help='absolute completed-update ceiling')
     bc.add_argument('--dynamic-league', action='store_true', help='activate the ranked main-history league')
     training = sub.add_parser('train', help='train/resume complete PPO update boundaries')
@@ -164,8 +169,16 @@ def main(argv: Optional[List[str]] = None):
             stop = StopFlag()
             with _graceful_signals(stop):
                 if args.cmd == 'train-bc':
-                    from .main_bc import continue_bc
-                    report = continue_bc(args.max_updates, stop, dynamic=args.dynamic_league)
+                    if args.legacy:
+                        if args.out is not None:
+                            parser.error('--legacy uses the historical main-bc run directory')
+                        from .main_bc import continue_bc
+                        report = continue_bc(args.max_updates, stop, dynamic=args.dynamic_league)
+                    else:
+                        if args.out is None or args.dynamic_league:
+                            parser.error('supported BC requires --out and uses the loss-priority league')
+                        from .main_bc import train_bc
+                        report = train_bc(args.out, args.max_updates, stop, source=args.source)
                 else:
                     config = TrainConfig.from_json(args.config)
                     resume = args.out/'latest' if args.resume == 'latest' else Path(args.resume) if args.resume else None

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""The supported full-state BC training continuation."""
+"""Normal supported BC training and the explicit historical BC788 continuation."""
 import hashlib
 from pathlib import Path
 
@@ -9,6 +9,7 @@ from .config import TrainConfig
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = Path('training/runs/combination-study-2026-11-20/BC/updates/000788')
 DESTINATION = Path('training/runs/main-bc')
+CURRENT_DESTINATION = Path('training/runs/bc-current')
 PROFILE = Path('training/configs/main-bc.json')
 SOURCE_HASH = 'e4712626768a553d67eb9917949b5de1c039b951e4df77ef2bb3c0058fed2cb0'
 SOURCE_ID = 'policy-sha256-v1:3466c7765c2d9fb8abb6ae249469aec8b1cefc1c3593279fa47f0ad14f74d4a1'
@@ -54,3 +55,21 @@ def continue_bc(ceiling, stop, *, dynamic=False):
         # Resolve the actual source boundary under train's writer lock.
         members = partial(catalog_members, ROOT)
     return train(config, run, run/'latest', max_updates=ceiling, stop_requested=stop, dynamic_members=members)
+
+
+def train_bc(run, ceiling, stop, *, source=None):
+    from .bc_current import fork_bc
+    from .config import BC_LEARNER
+    from .train import train
+    import torch
+
+    run = Path(run)
+    if ceiling < 0 or (source is not None and Path(source).name.isdecimal() and ceiling < int(Path(source).name)):
+        raise ValueError('absolute update ceiling precedes the requested boundary')
+    if source is not None:
+        torch.set_num_threads(1)
+        fork_bc(source, run)
+    cfg = TrainConfig.from_json(run/'config.json')
+    if cfg.learner != BC_LEARNER:
+        raise ValueError('train-bc requires an activated supported BC experiment')
+    return train(cfg, run, run/'latest', max_updates=ceiling, stop_requested=stop)

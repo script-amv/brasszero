@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """Versioned dual-Adam payload stored at the existing sparse optimizer boundary."""
+from copy import deepcopy
 import math
 
 import torch
@@ -70,3 +71,15 @@ def pack(actor, actor_adam, critic, critic_adam, lr):
                'critic_weights': critic.state_dict(), 'critic_adam': critic_adam.state_dict()}
     unpack(actor, payload, lr)
     return payload
+
+
+def independent_critic(loaded, *, clone=False):
+    critic = deepcopy(loaded.model)
+    adam = torch.optim.Adam(critic.parameters(), lr=loaded.state.config.ppo.learning_rate)
+    if clone:
+        if loaded.critic_state is not None or loaded.critic_optimizer_state is not None:
+            raise ValueError('refusing to reset independent critic or Adam')
+    else:
+        critic.load_state_dict(loaded.critic_state)
+        adam.load_state_dict(loaded.critic_optimizer_state)
+    return critic, adam

@@ -71,15 +71,18 @@ def test_bc_preparation_creates_once_and_refuses_unrelated_existing_run(tmp_path
         main_bc.prepare_main_run(tmp_path)
 
 
-def test_publisher_promotes_matching_experimental_identity_and_preserves_recommendation(tmp_path):
+@pytest.mark.parametrize('supported', [False, True])
+def test_publisher_promotes_matching_experimental_identity_and_preserves_recommendation(tmp_path, supported):
     from brass_rl.experiments import FORMAT
     from brass_rl.main_bc import DESTINATION, source_parent
     from brass_rl.model_inventory import update_inventory
 
-    run = tmp_path / DESTINATION
+    run = tmp_path / ('training/runs/bc-current' if supported else DESTINATION)
     run.mkdir(parents=True)
-    (run/'experiment.json').write_text(json.dumps({
-        'format': FORMAT, 'id': 'exp-main', 'parent': source_parent(), 'base_update': 788}))
+    declaration = {'format': FORMAT, 'id': 'exp-main', 'parent': source_parent(), 'base_update': 788}
+    if supported:
+        declaration.update(learner='brass-bc/1', mode='bc-current')
+    (run/'experiment.json').write_text(json.dumps(declaration))
     public = tmp_path/'players/models'
     public.mkdir(parents=True)
     source = run/'policies/000789'
