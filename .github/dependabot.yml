@@ -1,17 +1,33 @@
+# Monthly, grouped updates. Cargo.lock and the training requirement files are
+# inputs to model and job identities, and the owner's training setup runs
+# Python 3.9, so those ecosystems get security updates only (limit 0 turns off
+# routine version updates); move them in a planned, versioned migration.
 version: 2
 updates:
   - package-ecosystem: cargo
     directory: /
-    schedule: {interval: weekly}
+    schedule: {interval: monthly}
+    open-pull-requests-limit: 0
   - package-ecosystem: pip
     directory: /training
-    schedule: {interval: weekly}
+    schedule: {interval: monthly}
+    open-pull-requests-limit: 0
   - package-ecosystem: npm
     directory: /site
-    schedule: {interval: weekly}
+    schedule: {interval: monthly}
+    groups:
+      site:
+        update-types: [minor, patch]
+    ignore:
+      # Node types follow the supported Node 22 runtime.
+      - dependency-name: "@types/node"
+        update-types: [version-update:semver-major]
+      # TypeScript 7 breaks the Astro build; upgrade deliberately.
+      - dependency-name: typescript
+        update-types: [version-update:semver-major]
   - package-ecosystem: github-actions
     directory: /
-    schedule: {interval: weekly}
+    schedule: {interval: monthly}
     groups:
       actions:
         patterns: ["*"]
