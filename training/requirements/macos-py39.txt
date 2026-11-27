@@ -13,7 +13,7 @@ numpy==1.26.4
 packaging==26.3
 pluggy==1.6.0
 Pygments==2.21.0
-pytest==8.4.2
+pytest==9.0.3
 sympy==1.14.0
 tomli==2.5.0
 torch==2.2.2
