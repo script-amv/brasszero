@@ -6,5 +6,15 @@ authors:
   - given-names: Dmitrii
     family-names: Shostak
 version: 0.1.0
-date-released: 2026-11-21
+date-released: 2026-11-27
 license: Apache-2.0
+references:
+  - type: dataset
+    title: "BrassZero game records: machine-only four-player Brass: Birmingham games"
+    authors:
+      - given-names: Dmitrii
+        family-names: Shostak
+    version: "2026-11-27"
+    year: 2026
+    doi: 10.5281/zenodo.24578707
+    license: CC-BY-4.0

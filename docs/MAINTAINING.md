@@ -10,7 +10,7 @@
 | Build a site preview or deployment | `make test-site` | Validates and builds static files. A PR builds a preview artifact. A same-repository PR can deploy to a preview branch. Main deploys production. Missing Pages secrets leave the artifact available. |
 | Prepare a model | `make release-model MODEL=MODEL_ID` | Verifies the local catalog hashes, builds a card and archive, and prints the upload command for owner review. |
 | Snapshot game records | `make dataset-snapshot` | Builds a derived machine-game archive, datasheet, licence and SHA-256 manifest under `dist/dataset/`. |
-| Prepare a version | `make release VERSION=0.1.0` | Checks a clean tree, citation and changelog. Add `CONFIRM=1` to update citation metadata and create the annotated local tag. The tag workflow creates the release after an owner pushes it. |
+| Prepare a version | `make release VERSION=0.1.0` | Run on an updated `main`. Checks a clean tree, the version and date in `CITATION.cff` and the changelog entry; set those in a pull request first. Add `CONFIRM=1` to create the annotated local tag, without a new commit. The tag workflow creates the release after an owner pushes it. |
 | Check private workspace boundaries | `make sync-check` | Verifies ignored local repositories, game records, trained models and reference material. |
 
 Repeated packaging keeps identical outputs. Replacing a different local model card or distribution archive requires `CONFIRM=1` after reviewing the changes.

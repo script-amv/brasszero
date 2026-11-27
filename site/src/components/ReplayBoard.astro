@@ -1,0 +1,92 @@
+---
+// SPDX-License-Identifier: Apache-2.0
+// Schematic board drawn on real Midlands geography. Every slot and link carries
+// a data attribute so the replay script can update it; the build renders `state`.
+import type { ReplayData, ReplayState } from '../replay/types';
+import { BOARD_HEIGHT, BOARD_WIDTH, INDUSTRY_CODES, position } from '../replay/geography';
+
+interface Props { data: ReplayData; state: ReplayState; highlight?: ReplayData['plies'][number]['target'] | undefined }
+const { data, state, highlight } = Astro.props;
+const { locations, links, industries } = data.board;
+const S = 26; // tile size
+const GAP = 3;
+const anchor = locations.map((l) => position(l.id));
+
+const linkPath = (i: number) => {
+  const [a, b] = links[i]!;
+  const [x1, y1] = anchor[a]!;
+  const [x2, y2] = anchor[b]!;
+  return `M${x1.toFixed(1)},${y1.toFixed(1)} L${x2.toFixed(1)},${y2.toFixed(1)}`;
+};
+const slotBox = (loc: number, j: number) => {
+  const n = locations[loc]!.slots.length;
+  const [x, y] = anchor[loc]!;
+  return { x: x - (n * S + (n - 1) * GAP) / 2 + j * (S + GAP), y: y - S / 2 };
+};
+const hlSlot = highlight && 'slot' in highlight ? highlight.slot : -1;
+const hlLink = highlight && 'link' in highlight ? highlight.link : -1;
+---
+<svg class="replay-board" viewBox={`0 0 ${BOARD_WIDTH} ${BOARD_HEIGHT}`} role="img" aria-labelledby="board-title board-desc">
+  <title id="board-title">Board position</title>
+  <desc id="board-desc">Towns with their industry slots and the canal or rail links between them, coloured by the player who built them.</desc>
+  <g class="links">
+    {links.map((ln, i) => (
+      <path d={linkPath(i)} data-link={i} data-canal={ln[2]} data-rail={ln[3]}
+        data-owner={state.links[i] ?? undefined} data-era={state.era} class:list={{ hl: i === hlLink }} />
+    ))}
+  </g>
+  <g class="places">
+    {locations.map((loc, li) => {
+      const [x, y] = anchor[li]!;
+      if (loc.kind === 'merchant') {
+        return (
+          <g class="merchant">
+            <rect x={x - 9} y={y - 9} width="18" height="18" transform={`rotate(45 ${x} ${y})`} />
+            <text x={x} y={y + 28} text-anchor="middle">{loc.name.toUpperCase()}</text>
+          </g>
+        );
+      }
+      return (
+        <g class="town">
+          {loc.slots.map((slot, j) => {
+            const { x: sx, y: sy } = slotBox(li, j);
+            const t = state.slots[slot];
+            return (
+              <g data-slot={slot} data-owner={t ? t[0] : undefined} data-flipped={t ? t[3] : undefined} class:list={{ hl: slot === hlSlot }}>
+                <rect x={sx} y={sy} width={S} height={S} />
+                <text class="code" x={sx + S / 2} y={sy + S / 2 + 4} text-anchor="middle">{t ? INDUSTRY_CODES[industries[t[1]]!] : ''}</text>
+                <text class="lvl" x={sx + S - 2.5} y={sy + S - 3} text-anchor="end">{t ? t[2] : ''}</text>
+                <rect class="ring" x={sx - 5} y={sy - 5} width={S + 10} height={S + 10} />
+              </g>
+            );
+          })}
+          <text class="name" x={x} y={y + S / 2 + 15} text-anchor="middle">{loc.name}</text>
+        </g>
+      );
+    })}
+  </g>
+</svg>
+
+<style>
+  .replay-board { display: block; width: 100%; height: auto; font-family: var(--font-body); }
+  .links path { fill: none; stroke: var(--color-rule); stroke-width: 2; }
+  /* Only the current era's routes are drawn. */
+  .links path[data-era='canal'][data-canal='0'], .links path[data-era='rail'][data-rail='0'] { display: none; }
+  .links path[data-owner] { stroke: var(--c); stroke-width: 5; stroke-linecap: round; }
+  .links path.hl { stroke-width: 9; }
+  .merchant rect { fill: var(--color-ink); stroke: var(--color-muted); stroke-width: 1.5; }
+  .merchant text { font-size: 11px; letter-spacing: 1px; fill: var(--color-muted); }
+  .name { font-size: 13px; fill: var(--color-paper); paint-order: stroke; stroke: var(--color-ink); stroke-width: 4px; }
+  [data-slot] rect:first-child { fill: var(--color-ink); stroke: #4a3d30; stroke-width: 1.2; }
+  [data-slot][data-owner] rect:first-child { stroke: var(--c); stroke-width: 2; }
+  [data-slot][data-flipped='1'] rect:first-child { fill: var(--c); }
+  .code { font-size: 11.5px; font-weight: 700; fill: var(--c); }
+  .lvl { font-size: 8px; font-weight: 600; fill: var(--c); }
+  [data-flipped='1'] .code, [data-flipped='1'] .lvl { fill: var(--color-ink); }
+  .ring { fill: none; stroke: none; }
+  [data-slot].hl .ring { stroke: var(--color-accent); stroke-width: 2.5; stroke-dasharray: 4 3; }
+  [data-owner='0'] { --c: var(--seat-0); }
+  [data-owner='1'] { --c: var(--seat-1); }
+  [data-owner='2'] { --c: var(--seat-2); }
+  [data-owner='3'] { --c: var(--seat-3); }
+</style>

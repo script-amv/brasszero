@@ -1,0 +1,223 @@
+---
+// SPDX-License-Identifier: Apache-2.0
+import BaseLayout from '../layouts/BaseLayout.astro';
+import SiteHeader from '../components/SiteHeader.astro';
+import SiteFooter from '../components/SiteFooter.astro';
+import ReplayBoard from '../components/ReplayBoard.astro';
+import { INDUSTRY_CODES } from '../replay/geography';
+import type { ReplayData } from '../replay/types';
+import replay from '../../public/data/replays/record-124.json';
+import approved from '../data/claims.json';
+import coalbrookdale from '../assets/art/coalbrookdale.jpg';
+import { getEntry } from 'astro:content';
+
+const home = await getEntry('home', 'home');
+if (!home) throw new Error('src/content/home.md is missing');
+
+const approvedHeadlines = approved.headlines;
+const data = replay as unknown as ReplayData;
+const { meta, plies, states } = data;
+const N = plies.length;
+const featured = meta.featured;
+// Open on the featured player's last decision before the game ends.
+let start = N;
+for (let i = N - 1; i >= 0; i--) if (plies[i]!.p === featured && !plies[i]!.end) { start = i + 1; break; }
+const state = states[start]!;
+const last = plies[start - 1];
+const eraStart = states.findIndex((s) => s.era === 'rail');
+const seatColors = [0, 1, 2, 3].map((i) => (i === featured ? 'var(--color-accent)' : ['var(--color-brass)', '#8fa6ac', '#cdbfa8'][[0, 1, 2, 3].filter((s) => s !== featured).indexOf(i)]!));
+const rootStyle = seatColors.map((c, i) => `--seat-${i}: ${c}`).join('; ');
+const sign = (v: number) => (v > 0 ? `+${v}` : String(v));
+const order = [0, 1, 2, 3].sort((a, b) => state.players[b]![0] - state.players[a]![0]);
+const opponents = meta.seats.filter((_, i) => i !== featured).join(', ');
+---
+<BaseLayout
+  title="Replay · BrassZero"
+  description={`Step through the ${meta.final_vp[featured]}-point game move by move: the board, every player's score, income and money, and each decision.`}
+  ogImage={coalbrookdale}
+>
+  <SiteHeader slot="header" links={[{ href: '/', label: 'Project' }, { href: '/training', label: 'Training record' }, { href: '/replay', label: 'Replay', current: true }]} />
+
+  <div class="replay" style={rootStyle} data-replay="/data/replays/record-124.json" data-start={start} data-featured={featured}>
+    <header class="wrap intro">
+      <p class="kicker">Replay · {meta.category} game</p>
+      <h1 id="page-title">{approvedHeadlines.record}</h1>
+      <p class="lede">
+        The highest score an AI player has recorded so far: the model from update {meta.seats[featured]!.replace('Update ', '')}, playing
+        against three earlier models ({opponents}). Step through all {N} moves.
+      </p>
+    </header>
+
+    <section class="wrap controls" aria-label="Replay controls">
+      <div class="buttons" role="group" aria-label="Step through the game">
+        <button type="button" data-go="first" aria-label="Start of game">|‹</button>
+        <button type="button" data-go="prev-round" aria-label="Previous round">«</button>
+        <button type="button" data-go="prev" aria-label="Previous move">‹</button>
+        <button type="button" data-go="play" class="play" aria-label="Play">Play</button>
+        <button type="button" data-go="next" aria-label="Next move">›</button>
+        <button type="button" data-go="next-round" aria-label="Next round">»</button>
+        <button type="button" data-go="last" aria-label="End of game">›|</button>
+      </div>
+      <p class="where" aria-live="polite"><span data-where>Move <strong>{start}</strong> of {N} · {state.era === 'canal' ? 'Canal' : 'Rail'} era · round {state.round}</span></p>
+      <label class="option">Speed
+        <select data-speed>
+          <option value="2000">Slow</option>
+          <option value="1000" selected>Normal</option>
+          <option value="400">Fast</option>
+        </select>
+      </label>
+      <label class="option check"><input type="checkbox" data-pause-featured checked /> Pause on {meta.seats[featured]}’s moves</label>
+      <div class="scrub">
+        <label for="scrub" class="visually-hidden">Move</label>
+        <input id="scrub" type="range" min="0" max={N} value={start} data-scrub style={`--pos: ${(start / N) * 100}%`} />
+        <div class="eras" aria-hidden="true">
+          <span>Canal era</span>
+          <span class="rail" style={`left: ${(eraStart / N) * 100}%`}>Rail era</span>
+          <span class="tick" style={`left: ${(eraStart / N) * 100}%`}></span>
+        </div>
+      </div>
+    </section>
+
+    <div class="wrap main">
+      <div class="board-col">
+        <figure class="board">
+          <div class="board-scroll"><ReplayBoard data={data} state={state} highlight={last?.target} /></div>
+          <figcaption>
+            <ul class="seats">
+              {[featured, ...[0, 1, 2, 3].filter((i) => i !== featured)].map((i) => <li><span class="sw" style={`background: var(--seat-${i})`}></span>{meta.seats[i]}</li>)}
+            </ul>
+            <p>
+              {Object.entries(INDUSTRY_CODES).map(([k, v], i) => <>{i > 0 && ' · '}<strong>{v}</strong> {k}</>)}.
+              Small number: tile level. Filled tile: flipped. Outlined: not yet flipped. Dashed frame: the tile the last move built.
+              Town positions follow the real map of the Midlands; merchants are drawn at the map edge.
+            </p>
+          </figcaption>
+        </figure>
+
+        <table class="players">
+          <caption>Players after this move <span class="cap-note">Victory points are scored at the end of each era.</span></caption>
+          <thead><tr><th scope="col">Player</th><th scope="col">VP</th><th scope="col">Income</th><th scope="col">Money</th><th scope="col">Final</th></tr></thead>
+          <tbody data-players>
+            {order.map((i) => (
+              <tr data-seat={i}>
+                <th scope="row"><span class="sw" style={`background: var(--seat-${i})`}></span>{meta.seats[i]}</th>
+                <td>{state.players[i]![0]}</td><td>{sign(state.players[i]![1])}</td><td>£{state.players[i]![2]}</td><td class="final">{meta.final_vp[i]}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <aside class="side" aria-label="Last decision and move log">
+        <section class="decision" aria-labelledby="decision-title">
+          <h2 id="decision-title" class="kicker small">Last decision</h2>
+          <p class="decision-move" data-decision>{last ? last.text : 'Start of game'}</p>
+          <p class="who" data-who>{last ? <><span class="sw" style={`background: var(--seat-${last.p})`}></span>{meta.seats[last.p]} · move {start} of {N}</> : 'No moves yet'}</p>
+          <div data-candidates class="note">
+            <p>The model’s probabilities for each option are not available for this game yet. The archive stores the moves played; we will publish the model’s view, recomputed from the recorded model, when that step is built.</p>
+          </div>
+        </section>
+
+        <section class="log" aria-labelledby="log-title">
+          <h2 id="log-title" class="small-title">Move log</h2>
+          <ol data-log>
+            {plies.map((m, i) => !m.end && (
+              <li data-ply={i} class:list={{ current: i === start - 1, future: i >= start }}>
+                <button type="button" data-goto={i + 1}>
+                  <span class="num">{i + 1}</span><span class="sw" style={`background: var(--seat-${m.p})`}></span><span>{m.text}</span>
+                </button>
+              </li>
+            ))}
+          </ol>
+        </section>
+      </aside>
+    </div>
+    <p class="wrap source">Recorded {meta.category} game, exported {meta.exported}. Every position is rebuilt from the recorded moves by the rules engine.</p>
+  </div>
+
+  <SiteFooter slot="footer" credits={home.data.credits} />
+</BaseLayout>
+
+<script>
+  import { startReplay } from '../replay/player';
+  startReplay();
+</script>
+
+<style>
+  .replay { padding-top: 6rem; }
+  .wrap { max-width: 80rem; margin: 0 auto; padding-inline: var(--gutter); }
+  .intro h1 { margin-top: 0.75rem; font-size: clamp(2.5rem, 6vw, 4.5rem); }
+  .lede { max-width: 44rem; margin: 1rem 0 0; color: var(--color-muted); }
+
+  .controls {
+    margin-top: 2rem;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem 1.5rem;
+    padding-block: 1.25rem;
+    border-block: 1px solid var(--color-rule);
+  }
+  .buttons { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+  button { font: 600 1rem/1 var(--font-body); color: var(--color-paper); background: transparent; border: 1px solid #4a3d30; min-width: 3rem; min-height: 3rem; padding: 0 1rem; cursor: pointer; }
+  button:hover { border-color: var(--color-brass); }
+  .play { background: var(--color-accent); border-color: var(--color-accent); color: var(--color-ink); min-width: 6rem; }
+  .where { margin: 0; font-size: 0.95rem; color: var(--color-muted); }
+  .where :global(strong) { color: var(--color-accent); font-size: 1.05rem; }
+  .option { display: inline-flex; align-items: center; gap: 0.5rem; font-size: 0.875rem; color: var(--color-muted); }
+  .option:first-of-type { margin-left: auto; }
+  select { min-height: 2.75rem; padding: 0 0.6rem; background: var(--color-ink); color: var(--color-paper); border: 1px solid #4a3d30; font: 500 0.9rem var(--font-body); }
+  input[type='checkbox'] { width: 1.1rem; height: 1.1rem; accent-color: var(--color-accent); }
+  .scrub { flex: 1 1 100%; position: relative; padding-bottom: 1.5rem; }
+  input[type='range'] { width: 100%; height: 2.75rem; margin: 0; background: transparent; appearance: none; cursor: pointer; }
+  input[type='range']::-webkit-slider-runnable-track { height: 8px; background: linear-gradient(to right, var(--color-accent) var(--pos), #2a211a var(--pos)); }
+  input[type='range']::-moz-range-track { height: 8px; background: linear-gradient(to right, var(--color-accent) var(--pos), #2a211a var(--pos)); }
+  input[type='range']::-webkit-slider-thumb { appearance: none; width: 20px; height: 20px; margin-top: -6px; border-radius: 50%; background: var(--color-paper); border: 3px solid var(--color-accent); }
+  input[type='range']::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%; background: var(--color-paper); border: 3px solid var(--color-accent); }
+  .eras { position: absolute; left: 0; right: 0; bottom: 0; height: 1.25rem; font-size: 0.75rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--color-muted); }
+  .eras .rail { position: absolute; padding-left: 0.5rem; }
+  .eras .tick { position: absolute; top: -1.6rem; width: 2px; height: 1.2rem; background: var(--color-muted); }
+
+  .main { margin-top: 2rem; display: flex; flex-wrap: wrap; gap: 2rem 2.5rem; align-items: flex-start; }
+  .board-col { flex: 2 1 36rem; min-width: 0; }
+  .board { margin: 0; }
+  .board :global(.replay-board) { border: 1px solid var(--color-brass); padding: 0.5rem; }
+  figcaption { margin-top: 0.75rem; font-size: 0.8125rem; line-height: 1.6; color: var(--color-muted); }
+  figcaption p { margin: 0.4rem 0 0; }
+  .seats { display: flex; flex-wrap: wrap; gap: 0.25rem 1.25rem; margin: 0; padding: 0; list-style: none; color: var(--color-paper); }
+  .sw { display: inline-block; width: 0.65rem; height: 0.65rem; margin-right: 0.5rem; vertical-align: 0.05em; }
+
+  .players { width: 100%; margin-top: 2rem; border-collapse: collapse; font-size: 0.9375rem; font-variant-numeric: tabular-nums; }
+  caption { text-align: left; padding-bottom: 0.5rem; font-weight: 600; }
+  thead th { font-size: 0.6875rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--color-muted); font-weight: 600; padding-bottom: 0.4rem; text-align: right; }
+  thead th:first-child { text-align: left; }
+  tbody tr { border-top: 1px solid var(--color-rule); }
+  tbody th { text-align: left; font-weight: 500; padding: 0.6rem 0; white-space: nowrap; }
+  tbody td { text-align: right; padding: 0.6rem 0 0.6rem 0.75rem; }
+  tbody td:first-of-type { font-weight: 600; }
+  .final { color: var(--color-muted); }
+
+  .side { flex: 1 1 22rem; min-width: 0; display: flex; flex-direction: column; gap: 2.5rem; }
+  .small { font-size: 0.8125rem; }
+  .decision-move { margin: 0.5rem 0 0; font: 500 2rem/1.1 var(--font-display); text-wrap: balance; }
+  .who { margin: 0.5rem 0 0; font-size: 0.9rem; color: var(--color-muted); }
+  .note p { margin: 1rem 0 0; padding: 1rem; border: 1px solid var(--color-rule); font-size: 0.875rem; line-height: 1.6; color: var(--color-muted); }
+  .note :global(.cand) { margin-top: 1rem; }
+  .small-title { font: 600 1rem/1.4 var(--font-body); }
+  .log ol { list-style: none; margin: 0.5rem 0 0; padding: 0 0.5rem 0 0; max-height: 34rem; overflow-y: auto; }
+  .log li + li { border-top: 1px solid var(--color-rule); }
+  .log button { display: grid; grid-template-columns: 2.5rem 0.9rem 1fr; align-items: center; width: 100%; min-height: 2.5rem; padding: 0.35rem 0; border: 0; background: none; text-align: left; font: 400 0.9rem/1.4 var(--font-body); }
+  .log .num { font-size: 0.75rem; color: var(--color-muted); font-variant-numeric: tabular-nums; }
+  .log .current button { font-weight: 600; }
+  .log .current .num { color: var(--color-accent); }
+  .log .future button { color: var(--color-muted); }
+  .log .future .sw { opacity: 0.4; }
+  .source { margin-top: 2.5rem; margin-bottom: var(--space); font-size: 0.8125rem; color: var(--color-muted); }
+  .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .cap-note { display: block; font-weight: 400; font-size: 0.8125rem; color: var(--color-muted); }
+  @media (max-width: 40rem) {
+    .option:first-of-type { margin-left: 0; }
+    .buttons { flex: 1 1 100%; display: grid; grid-template-columns: repeat(3, 1fr) 1.7fr repeat(3, 1fr); gap: 0.35rem; }
+    .buttons button { min-width: 0; padding: 0; }
+    /* Keep tiles legible on phones: the board scrolls sideways instead of shrinking. */
+    .board-scroll { overflow-x: auto; }
+    .board-scroll :global(.replay-board) { min-width: 44rem; }
+  }
+</style>

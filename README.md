@@ -2,7 +2,7 @@
 
 BrassZero is an independent research project that teaches a program to play Brass: Birmingham through self-play. The four-player game combines hidden hands, shared markets and decisions that score much later. The project includes a verified Rust rules engine, public-information players, graph-network policies and tools for measuring them on matched deals.
 
-**Research status, 20 November 2026.** The dated main-line recommendation is BC 788. The latest main-line checkpoint in that snapshot is 793. Human playing strength remains unmeasured.
+**Research status, 27 November 2026.** The recommended main-line model is BC 788. The latest published main-line checkpoint is 4097; its playing strength has not been evaluated, and a higher update number does not mean a stronger model. Human playing strength remains unmeasured. [Model weights](https://huggingface.co/brasszero/brasszero-ppo) and [game records](https://huggingface.co/datasets/brasszero/brasszero-games) are on Hugging Face.
 
 | Result | Population | Reproduce or inspect |
 | --- | --- | --- |
@@ -20,7 +20,7 @@ make test lint check-public
 make site-dev
 ```
 
-For frozen-model inference, install the optional CPU runtime and extract a reviewed model release. [Usage](docs/USAGE.md) gives the evaluation command.
+For frozen-model inference, install the optional CPU runtime and download a published checkpoint. The [model page](https://huggingface.co/brasszero/brasszero-ppo) gives the commands, and [Usage](docs/USAGE.md) covers evaluation.
 
 ## Repository map
 
@@ -30,7 +30,7 @@ For frozen-model inference, install the optional CPU runtime and extract a revie
 - `site/` contains the static research site and compact measured aggregates.
 - `docs/` contains [results](docs/RESULTS.md), [training history](docs/TRAINING-HISTORY.md), the [dataset description](docs/DATASHEET.md) and [maintenance commands](docs/MAINTAINING.md).
 
-Model weight releases are prepared for GitHub Releases under Apache-2.0, each with a card and checksum. Versioned replay snapshots are prepared for Zenodo under CC BY 4.0. Downloads become available after the owner publishes them. Raw training runs stay private. Cite the version using [CITATION.cff](CITATION.cff).
+Selected model checkpoints are published on [Hugging Face](https://huggingface.co/brasszero/brasszero-ppo) under Apache-2.0, with a model card and checksums. A snapshot of machine-only games from 27 November 2026 is published as a [Hugging Face dataset](https://huggingface.co/datasets/brasszero/brasszero-games) under CC BY 4.0. Version 0.1.0 on the [GitHub releases page](https://github.com/script-amv/brasszero/releases) carries the BC 788 archive. The same snapshot is archived on Zenodo with a citable DOI: [10.5281/zenodo.24578707](https://doi.org/10.5281/zenodo.24578707) names this snapshot, and [10.5281/zenodo.24578706](https://doi.org/10.5281/zenodo.24578706) always resolves to the latest dataset version. Raw training runs stay private. Cite the software using [CITATION.cff](CITATION.cff) and the game records by their DOI.
 
 Developed by the author with AI coding assistants (Claude Code, Codex).
 

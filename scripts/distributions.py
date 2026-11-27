@@ -199,6 +199,32 @@ def dataset(confirm=False):
     )
 
 
+def lineage_notes(run, experiment, branch):
+    """State the opponent mixture and parent changes recorded by the run itself."""
+    notes = []
+    config_path = run / "config.json"
+    if config_path.is_file():
+        config = json.loads(config_path.read_bytes())
+        mix = config.get("league", {}).get("lineup_probabilities")
+        if mix:
+            own, frozen, mixed = (round(100 * x) for x in mix)
+            notes.append(
+                f"Each training lineup was drawn with probability {own}% for self-play in all four seats, "
+                f"{frozen}% for one learning seat against three frozen snapshots, and {mixed}% for one learning "
+                "seat against three opponents drawn from the snapshots and the rule-based Random and Greedy "
+                "players. Greedy is therefore also a training opponent."
+            )
+    changes = experiment.get("config_overrides") or {}
+    if changes:
+        listed = ", ".join(f"`{k}` from `{v['from']}` to `{v['to']}`" for k, v in sorted(changes.items()))
+        notes.append(f"Compared with its parent run, this branch changed {listed}.")
+        if branch == "BC" and {"ppo.reward", "ppo.critic_target"} <= set(changes):
+            notes.append(
+                "`BC` is the study's label for these two changes. It does not mean behaviour cloning."
+            )
+    return " ".join(notes)
+
+
 def model_evaluation(run, metadata):
     """Use a finalized, ID-bound matched study when the local journal supplies one."""
     paths = [
@@ -245,8 +271,18 @@ def model_evaluation(run, metadata):
                 else f"Against frozen 688, paired mean-VP difference from control was {comparison['mean_difference']:+.2f} (95% interval {lo:+.2f} to {hi:+.2f}).",
             ]
         )
+    compared = sorted(result.get("policies", {}))
+    if len(compared) > 1:
+        evaluation.extend(
+            [
+                "",
+                "The same deals compared the policies "
+                + ", ".join(compared)
+                + ". Numbers for a policy picked after such a comparison may be optimistic.",
+            ]
+        )
     evaluation.extend(["", "Deal seeds: " + ", ".join(str(v) for v in suite["deal_seeds"]) + "."])
-    training = f"The branch played {study['games_per_arm']} self-play games during the paired training study. Earlier games belong to the inherited parent lineage."
+    training = f"The branch played {study['games_per_arm']} training games during the paired training study. Earlier games belong to the inherited parent lineage."
     return training, "\n".join(evaluation)
 
 
@@ -310,7 +346,7 @@ def model(identifier, confirm=False):
         "WEIGHTS": sums["policy.pt"],
         "PARAMETERS": str(parameter_count(paths[-1])),
         "EVALUATION": evaluation,
-        "TRAINING": training,
+        "TRAINING": " ".join(filter(None, [training, lineage_notes(run, experiment, row.get("branch"))])),
     }
     for key, value in values.items():
         card = card.replace("{{" + key + "}}", value)
