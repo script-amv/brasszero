@@ -34,7 +34,7 @@ const opponents = record.opponents === 'mixed' ? 'three other AI players' : reco
   description={`Every recorded AI score across ${meta.latest_update} model updates of BrassZero self-play training, with behaviour and scoring metrics.`}
   ogImage={coalbrookdale}
 >
-  <SiteHeader slot="header" links={[{ href: '/', label: 'Project' }, { href: '/training', label: 'Training record', current: true }]} />
+  <SiteHeader slot="header" links={[{ href: '/', label: 'Project' }, { href: '/training', label: 'Training record', current: true }, { href: '/replay', label: 'Replay' }]} />
 
   <section class="hero" aria-labelledby="page-title">
     <Image class="backdrop" src={coalbrookdale} alt="" widths={[640, 1280, 2048]} sizes="100vw" loading="eager" layout="none" />

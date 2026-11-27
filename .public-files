@@ -175,11 +175,13 @@ site/astro.config.mjs
 site/package-lock.json
 site/package.json
 site/public/_headers
+site/public/data/replays/record-124.json
 site/public/data/training-record.json
 site/public/favicon.svg
 site/public/licenses/cormorant-garamond.txt
 site/public/licenses/work-sans.txt
 site/scripts/client-notices.mjs
+site/scripts/export_replay.py
 site/scripts/export_training_record.py
 site/src/assets/art/CREDITS
 site/src/assets/art/arkwright.jpg
@@ -195,6 +197,7 @@ site/src/components/ChartFigure.astro
 site/src/components/Figure.astro
 site/src/components/Hero.astro
 site/src/components/Legend.astro
+site/src/components/ReplayBoard.astro
 site/src/components/Roadmap.astro
 site/src/components/Section.astro
 site/src/components/SiteFooter.astro
@@ -214,7 +217,11 @@ site/src/content/sections/why-this-game.md
 site/src/data/claims.json
 site/src/layouts/BaseLayout.astro
 site/src/pages/index.astro
+site/src/pages/replay.astro
 site/src/pages/training.astro
+site/src/replay/geography.ts
+site/src/replay/player.ts
+site/src/replay/types.ts
 site/src/site.config.ts
 site/src/styles/global.css
 site/src/styles/tokens.css
