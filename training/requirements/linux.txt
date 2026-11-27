@@ -2,7 +2,7 @@
 # The tested runtime installed torch2.2.2+cpu from the official CPU wheel index.
 # Retain the actual pip freeze, runtime/hardware/source and test evidence for each
 # new environment; see docs/KAGGLE.md. GPU compatibility is a separate gate.
-torch==2.2.2
+torch==2.13.0
 numpy==1.26.4
 maturin==1.9.6
 pytest==8.4.2
