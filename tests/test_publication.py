@@ -146,3 +146,53 @@ def test_dataset_omits_cursor_branches_and_private_aliases():
     assert projected["seats"][1]["version_id"] == record["seat_identities"][1]["version_id"]
     record["provenance"]["cursor"] = 0
     assert public_record(record) == ("changed lineup or branch", None)
+
+
+@pytest.mark.parametrize("winning_source", [{"coal": 17}, None])
+def test_window_export_counts_one_policy_and_uses_its_exact_highest_game(tmp_path, monkeypatch, winning_source):
+    import runpy
+
+    script = ROOT / "site/scripts/export_training_record.py"
+    source, dest = tmp_path / "dashboard.json", tmp_path / "public.json"
+    groups = []
+    games = []
+    for vp, game, seat, sources in [
+        (70, "b", 2, {"coal": 99}),
+        (70, "b", 1, winning_source),
+        (70, "a", 0, {"coal": 7}),
+        (60, "z", 0, {"coal": 2}),
+    ]:
+        best = {"game_id": game, "seat": seat, "vp": vp}
+        groups.append({"model_id": "shared", "update": 39, "best_game": best, "sources": sources,
+                       "actions": {"Loan": 1}, "samples": 1,
+                       "strategy": {"loans": {"rail": {"samples": 1, "value": seat}}}})
+        games.append({**best, "update": 39, "model_id": "shared", "category": "training",
+                      "opponent_kind": "mixed", "label": "Shared policy"})
+    source.write_text(json.dumps({"data_date": "2026-01-01", "coverage": {}, "points": groups,
+                                  "games": games, "game_count": 3}))
+    monkeypatch.setattr(sys, "argv", [str(script), "--input", str(source), "--out", str(dest)])
+    runpy.run_path(str(script), run_name="__main__")
+    window, = json.loads(dest.read_text())["windows"]
+    assert window["policies"] == 1
+    assert window["seat_games"] == window["samples"]["actions"]["Loan"] == 4
+    assert window["samples"]["loans"]["rail"] == 4 and window["loans"]["rail"] == 0.75
+    assert window["samples"]["sources"]["coal"] == int(winning_source is not None)
+    if winning_source is None:
+        assert window["sources"] is None
+    else:
+        assert window["sources"]["coal"] == 17
+
+
+def test_live_export_explicitly_requests_all_model_histories(monkeypatch):
+    import io
+    import runpy
+    import urllib.parse
+    import urllib.request
+
+    def reply(url, timeout):
+        assert urllib.parse.parse_qs(urllib.parse.urlsplit(url).query)["scope"] == ["all"]
+        return io.BytesIO(b'{"games":[]}')
+
+    monkeypatch.setattr(urllib.request, "urlopen", reply)
+    fetch = runpy.run_path(str(ROOT / "site/scripts/export_training_record.py"))["fetch"]
+    assert fetch("http://localhost") == {"games": []}

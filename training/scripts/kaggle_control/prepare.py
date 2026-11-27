@@ -62,7 +62,7 @@ def seed(project, output):
         write(output.with_suffix('.json'), summary)
 
 
-def seed_bc(source, output, *, max_wall_time_seconds=None):
+def seed_bc(source, output, *, max_wall_time_seconds=None, experimental=False):
     """Seal a new supported BC child from an explicitly selected full boundary."""
     import torch
     from brass_rl.bc_current import fork_bc
@@ -77,7 +77,7 @@ def seed_bc(source, output, *, max_wall_time_seconds=None):
         torch.set_num_threads(1)
         with tempfile.TemporaryDirectory() as temp:
             state = Path(temp)/'state'
-            fork_bc(source, state/'run', max_wall_time_seconds=max_wall_time_seconds)
+            fork_bc(source, state/'run', max_wall_time_seconds=max_wall_time_seconds, experimental=experimental)
             summary = verify(state)
             summary['sha256'] = seal(state, output)
             write(summary_path, summary)
@@ -136,7 +136,7 @@ def cpu_wheel():
     return path
 
 
-def prepare(state, summary_path, dest, slug, deadline, stage='resume', proof=None):
+def prepare(state, summary_path, dest, slug, deadline, stage='resume', proof=None, *, project):
     if not time.time()+2400 < deadline <= time.time()+12*3600+1:
         raise ValueError('deadline must provide export reserve within 12 hours')
     summary = read(summary_path)
@@ -188,7 +188,7 @@ def prepare(state, summary_path, dest, slug, deadline, stage='resume', proof=Non
     write(kernel/'kernel-metadata.json', dict(id=slug, title=title, code_file='run.py', language='python',
           kernel_type='script',is_private=True,enable_gpu=False,enable_tpu=False,enable_internet=True,
           dataset_sources=[dataset],kernel_sources=[],model_sources=[],competition_sources=[]))
-    write(dest/'job.json', dict(run=run, kernel=slug+'/1', dataset=dataset+'/versions/1', deadline=deadline,
+    write(dest/'job.json', dict(library_project=str(Path(project).resolve()), run=run, kernel=slug+'/1', dataset=dataset+'/versions/1', deadline=deadline,
           descriptor=descriptor,revision=revision,stage=stage,proof_run=previous,
           proof_directory=proof.name if proof is not None else None,session_deadline=session_deadline,initial=summary))
 
@@ -219,7 +219,9 @@ if __name__ == '__main__':
     cmd.add_argument('source', type=Path)
     cmd.add_argument('archive', type=Path)
     cmd.add_argument('--max-wall-time-seconds', type=float, help='training wall budget for the new BC child')
+    cmd.add_argument('--experimental', action='store_true')
     cmd = sub.add_parser('prepare')
+    cmd.add_argument('--project-root', type=Path, required=True, help='host data project receiving returned models and games')
     for name in ('state','summary','directory'):
         cmd.add_argument(name, type=Path)
     cmd.add_argument('slug')
@@ -235,7 +237,7 @@ if __name__ == '__main__':
     if args.cmd == 'seed':
         seed(args.project.resolve(), args.archive.resolve())
     elif args.cmd == 'seed-bc':
-        seed_bc(args.source.resolve(), args.archive.resolve(), max_wall_time_seconds=args.max_wall_time_seconds)
+        seed_bc(args.source.resolve(), args.archive.resolve(), max_wall_time_seconds=args.max_wall_time_seconds, experimental=args.experimental)
     elif args.cmd == 'adopt-retry':
         from campaign import adopt_retry
         state = adopt_retry(args.original,args.retry)
@@ -265,4 +267,4 @@ if __name__ == '__main__':
             claim_successor(previous,directory,plan)
         kaggle('kernels','push','-p',directory/'kernel','--timeout',remaining)
     else:
-        prepare(args.state,args.summary,args.directory,args.slug,args.deadline,args.stage,args.proof)
+        prepare(args.state,args.summary,args.directory,args.slug,args.deadline,args.stage,args.proof,project=args.project_root)

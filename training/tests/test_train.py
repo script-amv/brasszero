@@ -612,3 +612,26 @@ def test_legacy_journal_resume_leaves_prior_records_immutable(coordinator, monke
     assert before == {p.name: p.read_bytes() for p in checkpoint.iterdir()}
     assert not (resumed.latest_checkpoint/'optimizer.pt').exists()
     assert (resumed.latest_checkpoint/'retention.json').is_file()
+
+
+@pytest.mark.parametrize('captured', [False, True])
+def test_periodic_recordings_include_dev_and_earlier_ids(captured, tmp_path):
+    from types import SimpleNamespace
+    from brass_ai.replay_archive import Archive, Recorder, labeled_seats, outcome
+    from brass_rl.train import update_recordings
+    from helpers import native_game
+    archive = Archive(tmp_path/'archive')
+    game = native_game('GameOver')
+    result = outcome(game)
+    ids = []
+    for suite in [None, 'development', 'earlier']:
+        category = 'evaluation' if suite else 'training'
+        provenance = dict(category=category, experiment=suite or 'trial', game=0, run_experiment='trial', update=5)
+        recorder = Recorder(archive, start_state=game.to_json(), seats=labeled_seats(['random']*4), provenance=provenance)
+        recorder.finish(game)
+        ids.append(recorder.game_id)
+    episode = SimpleNamespace(replay_id=ids[0], game_id=0, result=SimpleNamespace(**result))
+    evaluation_ids = sorted(ids[1:], reverse=True)
+    batch = update_recordings(archive, [episode], 5, 'trial', 'trial', captured, evaluation_ids)
+    expected = [episode.replay_id, *evaluation_ids] if captured else sorted(ids)
+    assert [r['game_id'] for r in batch] == expected

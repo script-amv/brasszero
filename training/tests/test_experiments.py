@@ -48,7 +48,7 @@ def test_training_reuses_curated_public_model_name(coordinator, tmp_path):
     run = tmp_path/'training/runs/local'
     coordinator.train(tiny_config(), run, max_updates=0)
     models = tmp_path/'players/models'
-    existing = next(models.iterdir())
+    existing = next(p for p in models.iterdir() if p.is_dir())
     existing.rename(models/'ppo-curated')
     coordinator.train(tiny_config(), run, resume=run/'latest', max_updates=0)
-    assert [p.name for p in models.iterdir()] == ['ppo-curated']
+    assert [p.name for p in models.iterdir() if p.is_dir()] == ['ppo-curated']

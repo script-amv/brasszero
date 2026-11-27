@@ -17,7 +17,8 @@ import brass
 import numpy as np
 import torch
 from brass_ai.arena import RefereeGame
-from brass_ai.replay_archive import Recorder, labeled_seats, recording_context, recording_metadata, digest
+from brass_ai.replay_archive import (Archive, Recorder, digest, engine_id, labeled_seats, recording_context,
+                                     recording_id, recording_metadata)
 from brass_ai.fingerprints import engine_fingerprint
 from .agent import TorchAgent
 from .artifacts import capture_rng_states, restore_rng_states, export_model_policy
@@ -238,13 +239,31 @@ def _play_game(candidate, specs, seed, sampling):
         raise
     result=referee.result()
     row = {'ranking': list(result.ranking), 'vp': list(result.vp), 'plies': result.moves, 'events': tuple(events)}
-    if not trace_values:
-        row['replay_id'] = recorder.game_id
+    row['replay_id'] = recorder.game_id
     if trace_values and candidate_seat is not None:
         samples = agents[candidate_seat].samples
         row.update(value_predictions=samples, first_view_sha256=first_view,
                    terminal_brier=terminal_brier(samples, result.ranking, candidate_seat, result.moves))
     return row
+
+
+def _recover_recording(row, provenance):
+    """Resolve a reused outcome with one exact lookup, leaving its original bytes intact."""
+    initial = {'seed': row['deal_seed']}
+    seats = labeled_seats(row['labels'])
+    identity = recording_id(initial, seats, provenance, engine_id())
+    try:
+        record = Archive().read(identity)
+    except FileNotFoundError:
+        return
+    if record['status'] != 'completed':
+        return
+    actual = recording_id(record['initial'], record['seats'], record['provenance'], record['engine_id'])
+    if (actual != identity or record['game_id'] != identity or record['category'] != 'evaluation'
+            or any(record['result'][k] != row[k] for k in ('vp', 'ranking'))
+            or len(record['moves']) != row['plies']):
+        raise ValueError('historical recording disagrees with evaluation row')
+    row['replay_id'] = identity
 
 
 def evaluate(candidate: Path, suite: EvalSuite, out: Path, *, before_game=None) -> EvalReport:
@@ -293,21 +312,26 @@ def evaluate(candidate: Path, suite: EvalSuite, out: Path, *, before_game=None) 
                              'update': metadata.update,'deal_seed': manifest['deal_seeds'][deal],
                              'labels': labels,'candidate_seat': specs.index('candidate')}
                     path=rows_dir/('%08d.json' % game_id)
+                    context = recording_metadata()
+                    context.setdefault('run_experiment', None)
+                    context.update(category='evaluation', experiment=manifest['suite_id'], game=game_id,
+                                   update=metadata.update, candidate_id=metadata.id, lineup=name,
+                                   rotation=rotation, deal=deal, experiment_path=str(out.resolve()))
+                    if suite.outcomes_only:
+                        context['outcomes_only'] = True
                     if path.exists():
                         row=json.loads(path.read_text())
                         if any(row.get(k) != v for k,v in lineage.items()):
                             raise ValueError('completed evaluation row lineage mismatch')
+                        if 'replay_id' not in row:
+                            _recover_recording(row, context)
                     else:
                         if before_game is not None:
                             before_game()
                         resolved=[e if isinstance(e,str) else opponents[e['id']] for e in specs]
                         sampling=[streams.seed(suite.stream+'.policy',lineup_index,deal,rotation,s) for s in range(4)]
                         started=time.monotonic()
-                        with recording_context(**({'outcomes_only': True} if suite.outcomes_only else {}),
-                                               run_experiment=recording_metadata().get('run_experiment'),
-                                               category='evaluation', experiment=manifest['suite_id'],
-                                               game=game_id, update=metadata.update, candidate_id=metadata.id,
-                                               lineup=name, rotation=rotation, deal=deal, experiment_path=str(out.resolve())):
+                        with recording_context(**context):
                             game=_play_game(loaded,resolved,lineage['deal_seed'],sampling)
                         events=game.pop('events')
                         row=dict(lineage,**game,seconds=time.monotonic()-started)
@@ -403,6 +427,8 @@ def periodic_development(model, update, league, run_dir, config, journal):
         earlier_report=evaluate(candidate,earlier_suite,evaluation/'earlier'/earlier_suite.manifest()['suite_id'])
         result['earlier']={'suite_id':earlier_report.suite_id,'opponent_id':earlier_meta.id,
                            'summary':asdict(earlier_report.summaries['earlier'])}
+        result['recorded_replay_ids'] = [r['replay_id'] for report in (report, earlier_report)
+                                         for r in report.results if 'replay_id' in r]
         return result
     finally:
         restore_rng_states(before)

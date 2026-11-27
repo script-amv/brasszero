@@ -252,6 +252,8 @@ training/brass_rl/league_activation.py
 training/brass_rl/league_study.py
 training/brass_rl/learner_fork.py
 training/brass_rl/learning_study.py
+training/brass_rl/library.py
+training/brass_rl/library_replays.py
 training/brass_rl/loss_priority.py
 training/brass_rl/main_bc.py
 training/brass_rl/model.py
@@ -323,6 +325,7 @@ training/tests/test_league.py
 training/tests/test_league_recovery.py
 training/tests/test_league_study.py
 training/tests/test_learning_study.py
+training/tests/test_library.py
 training/tests/test_main_bc.py
 training/tests/test_model.py
 training/tests/test_portability.py

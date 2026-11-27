@@ -29,7 +29,7 @@ SCORE_WINDOW = 20  # updates per window for the mean score line
 
 
 def fetch(base):
-    query = urllib.parse.urlencode({"category": "all", "opponents": "all", "cohort": "", "model": ""})
+    query = urllib.parse.urlencode({"scope": "all", "category": "all", "opponents": "all", "cohort": "", "model": ""})
     with urllib.request.urlopen(f"{base}/api/dashboard?{query}", timeout=600) as response:
         return json.load(response)
 
@@ -43,6 +43,11 @@ def weighted(points, key, sub=None):
             num += cell["value"] * cell["samples"]
             den += cell["samples"]
     return round(num / den, 3) if den else None
+
+
+def best_game_key(point):
+    best = point["best_game"]
+    return best["vp"], best["game_id"], -best["seat"]
 
 
 def main():
@@ -91,10 +96,15 @@ def main():
         if lo + WINDOW - 1 > latest:
             continue  # incomplete window
         actions = Counter()
+        best_by_policy = {}
         for p in ps:
             actions.update(p["actions"])
+            mid = p["model_id"]
+            previous = best_by_policy.get(mid)
+            if previous is None or best_game_key(p) > best_game_key(previous):
+                best_by_policy[mid] = p
         total = sum(actions[a] for a in ACTIONS)
-        with_sources = [p["sources"] for p in ps if p.get("sources")]
+        with_sources = [p["sources"] for p in best_by_policy.values() if p.get("sources")]
         samples = {}
         for metric, keys in [
             ("loans", ERAS),
@@ -117,7 +127,7 @@ def main():
                 "samples": samples,
                 "lo": lo,
                 "hi": lo + WINDOW - 1,
-                "policies": len(ps),
+                "policies": len(best_by_policy),
                 "seat_games": sum(p["samples"] for p in ps),
                 "actions": {a: round(100 * actions[a] / total, 2) for a in ACTIONS} if total else None,
                 "loans": {e: weighted(ps, "loans", e) for e in ERAS},

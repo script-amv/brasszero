@@ -39,6 +39,18 @@ def storage_operation(function):
     return checked
 
 
+_ARCHIVE_ROOT = ContextVar('replay_archive_root', default=None)
+
+
+@contextmanager
+def archive_context(root):
+    token = _ARCHIVE_ROOT.set(root)
+    try:
+        yield
+    finally:
+        _ARCHIVE_ROOT.reset(token)
+
+
 _CONTEXT = ContextVar('replay_controller_context', default={})
 
 
@@ -230,7 +242,7 @@ def summary(record):
 class Archive:
     @storage_operation
     def __init__(self, root=None):
-        self.root = Path(root or os.environ.get('BRASS_REPLAY_ROOT', ROOT/'replays'))
+        self.root = Path(root or os.environ.get('BRASS_REPLAY_ROOT') or _ARCHIVE_ROOT.get() or ROOT/'replays')
         self.games = self.root/'games'
         self.games.mkdir(parents=True, exist_ok=True)
 
@@ -290,16 +302,39 @@ class Archive:
         hidden = shadowed_gamefiles(llm_gamefile_relation(r) for r in records)
         return [r for r in records if not r.get('duplicate_of') and r['game_id'] not in hidden]
 
-    def rebuild(self):
-        rows = []
-        for record in self.records():
-            row = {k: record.get(k) for k in ('game_id', 'status', 'category', 'created_at', 'result')}
-            row['plies'] = len(record['moves'])
-            row['provenance'] = {k: record['provenance'][k] for k in ('experiment', 'game', 'update', 'candidate_id') if k in record['provenance']}
-            row['seat_versions'] = [s['version_id'] for s in record.get('seat_identities', seat_identities(record['seats']))]
-            rows.append(row)
-        atomic_bytes(self.root/'index.jsonl', b''.join(encoded(r)+b'\n' for r in rows))
-        return rows
+    def rebuild(self, changed_ids=None):
+        """Rebuild from durable records, or update a known machine-training batch."""
+        (self.root/'locks').mkdir(exist_ok=True)
+        with (self.root/'locks/.index.writer.lock').open('a+b') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            index = self.root/'index.jsonl'
+            rows = {}
+            if changed_ids is not None and index.exists():
+                for line in index.read_bytes().splitlines():
+                    row = json.loads(line)
+                    rows[row['game_id']] = row
+                ids = set(changed_ids)
+            else:
+                ids = {p.name.split('.')[0] for p in self.games.glob('*.json*') if not p.name.startswith('.')}
+            relations = []
+            for identity in sorted(ids):
+                record = self.read(identity)
+                if record.get('duplicate_of'):
+                    rows.pop(identity, None)
+                    continue
+                relation = llm_gamefile_relation(record)
+                if relation:
+                    relations.append(relation)
+                row = {k: record.get(k) for k in ('game_id', 'status', 'category', 'created_at', 'result')}
+                row['plies'] = len(record['moves'])
+                row['provenance'] = {k: record['provenance'][k] for k in ('experiment', 'game', 'update', 'candidate_id') if k in record['provenance']}
+                row['seat_versions'] = [s['version_id'] for s in record.get('seat_identities', seat_identities(record['seats']))]
+                rows[identity] = row
+            for identity in shadowed_gamefiles(relations):
+                rows.pop(identity, None)
+            ordered = [rows[i] for i in sorted(rows)]
+            atomic_bytes(index, b''.join(encoded(r)+b'\n' for r in ordered))
+            return ordered
 
     def list(self, query=''):
         # Read source records: index loss/staleness cannot hide recordings.
@@ -334,6 +369,11 @@ class Archive:
         return True
 
 
+def recording_id(initial, seats, provenance, engine_id):
+    stable = {k: v for k, v in provenance.items() if k != 'experiment_path'}
+    return digest(dict(initial=initial, seats=seats, provenance=stable, engine_id=engine_id))
+
+
 class Recorder:
     @storage_operation
     def __init__(self, archive=None, *, seed=None, start_state=None, seats, provenance,
@@ -361,8 +401,7 @@ class Recorder:
             raise ValueError('seed must be uint64')
         initial = {'seed': seed} if seed is not None else {'start_state': start_state}
         identity = {'initial': initial, 'seats': seats, 'provenance': provenance, 'engine_id': engine_id()}
-        stable = {**identity, 'provenance': {k: v for k, v in provenance.items() if k != 'experiment_path'}}
-        self.game_id = game_id or digest(stable)
+        self.game_id = game_id or recording_id(**identity)
         self.path = self.archive.path(self.game_id, '.jsonl')
         self.record = dict(identity, format=FORMAT, game_id=self.game_id,
                            category=provenance.get('category', 'unknown'),

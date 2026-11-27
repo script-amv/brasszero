@@ -72,7 +72,7 @@ class Plan:
     manifests: dict
 
 
-def plan_runs(runs, *, verify=True):
+def plan_runs(runs, *, verify=True, external_parents=()):
     runs = tuple(sorted(set(Path(run).resolve() for run in runs)))
     by_hash = defaultdict(list)
     reasons = defaultdict(set)
@@ -142,6 +142,8 @@ def plan_runs(runs, *, verify=True):
             reasons[path].add('explicit')
     for parent in parent_refs:
         owner = experiments.get(parent['experiment_id'])
+        if owner is None and parent in external_parents:
+            continue  # Already verified under the external source run lock by the cloud importer.
         source = owner/'updates'/('%06d' % parent['update']) if owner else None
         if (source is None or manifests.get(source) != parent['checkpoint_sha256'] or
                 source not in model_ids.get((owner, parent['model_id']), ())):

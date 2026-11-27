@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from test_train import coordinator  # noqa: F401
 from brass_rl.config import TrainConfig
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -71,37 +72,21 @@ def test_bc_preparation_creates_once_and_refuses_unrelated_existing_run(tmp_path
         main_bc.prepare_main_run(tmp_path)
 
 
-@pytest.mark.parametrize('supported', [False, True])
-def test_publisher_promotes_matching_experimental_identity_and_preserves_recommendation(tmp_path, supported):
-    from brass_rl.experiments import FORMAT
-    from brass_rl.main_bc import DESTINATION, source_parent
-    from brass_rl.model_inventory import update_inventory
-
-    run = tmp_path / ('training/runs/bc-current' if supported else DESTINATION)
-    run.mkdir(parents=True)
-    declaration = {'format': FORMAT, 'id': 'exp-main', 'parent': source_parent(), 'base_update': 788}
-    if supported:
-        declaration.update(learner='brass-bc/1', mode='bc-current')
-    (run/'experiment.json').write_text(json.dumps(declaration))
-    public = tmp_path/'players/models'
-    public.mkdir(parents=True)
-    source = run/'policies/000789'
-    identity = 'policy-sha256-v1:test'
-    old = {'policy_id': identity, 'name': 'independently-published', 'lineage': 'experimental',
-           'branch': 'trial', 'role': 'trial', 'update': 789, 'other_preserved_locations': [],
-           'source_export': 'training/runs/trial/policies/000789'}
-    path = public/'catalog.json'
-    path.write_text(json.dumps({'models': [], 'other_preserved_snapshots': [old],
-                                'recommended': 'pinned-788', 'latest': 'pinned-788'}))
-    exports = [(identity, source, public/'policy-test')]
-    update_inventory(tmp_path, run, exports)
-    first = path.read_bytes()
-    updated = json.loads(first)
-    assert updated['recommended'] == 'pinned-788'
-    assert updated['latest'] == old['name']
-    assert updated['models'][0]['lineage'] == 'mainline'
-    assert updated['models'][0]['source_export'] == old['source_export']
-    assert str(source.relative_to(tmp_path)) in updated['models'][0]['other_preserved_locations']
-    assert updated['other_preserved_snapshots'] == []
-    update_inventory(tmp_path, run, exports)
-    assert path.read_bytes() == first
+def test_legacy_catalog_seeds_declared_tip_and_keeps_selection(tmp_path, coordinator):
+    from brass_rl.library import reconcile_library
+    from test_train import tiny_config
+    run = tmp_path/'training/runs/trial'
+    coordinator.train(tiny_config(), run, max_updates=0)
+    directory = tmp_path/'players/models'
+    catalog = json.loads((directory/'catalog.json').read_bytes())
+    row = catalog['other_preserved_snapshots'].pop()
+    row.update(lineage='mainline', branch='BC')
+    catalog.update(models=[row], latest=row['name'], recommended='pinned', development_selected_best='selected')
+    (directory/'catalog.json').write_text(json.dumps(catalog))
+    (directory/'lineage.json').unlink()
+    reconcile_library(tmp_path)
+    registry = json.loads((directory/'lineage.json').read_bytes())
+    assert registry['mainline_tip']['policy_id'] == row['policy_id']
+    assert registry['mainline_tip']['checkpoint_sha256'] is not None
+    updated = json.loads((directory/'catalog.json').read_bytes())
+    assert (updated['latest'], updated['recommended'], updated['development_selected_best']) == (row['name'], 'pinned', 'selected')

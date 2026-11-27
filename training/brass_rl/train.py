@@ -98,8 +98,6 @@ def publish_policies(run_dir: Path, journal=None) -> Path:
     journal = committed_records(run_dir) if journal is None else journal
     latest = None
     project = project_for(run_dir)
-    published = {} if project is None else {read_json(p)['id']: p.parent
-                 for p in (project/'players/models').glob('*/metadata.json')}
     exports = []
     try:
         for entry in journal:
@@ -107,16 +105,11 @@ def publish_policies(run_dir: Path, journal=None) -> Path:
             latest = run_dir/'policies'/name
             if not latest.exists() or entry['update'] == journal[-1]['update']:
                 export_policy(run_dir/'updates'/name, latest)
-            if project is not None:
-                identity = read_json(latest/'metadata.json')['id']
-                public = published.get(identity, project/'players/models'/('policy-'+identity.split(':')[-1]))
-                if not public.exists():
-                    export_policy(run_dir/'updates'/name, public)
-                    published[identity] = public
-                exports.append((identity, latest, public))
+            exports.append(latest)
         if project is not None:
-            from .model_inventory import update_inventory
-            update_inventory(project, run_dir, exports)
+            from .library import register_publication
+            register_publication(project, run_dir, exports,
+                                 include_evaluation=any(row['manifests'].get('dev') for row in journal))
     except (OSError, ValueError, RuntimeError) as exc:
         raise RuntimeError('update boundary is committed; portable policy export failed; '
                            'resume latest to repair publication: %s' % exc) from exc
@@ -165,9 +158,9 @@ def _manifests(episodes, streams, notes):
 
 
 
-def update_recordings(archive, episodes, update, experiment, run_experiment, captured):
+def update_recordings(archive, episodes, update, experiment, run_experiment, captured, evaluation_ids=None):
     """Resolve the actual collector recordings without loading historical games."""
-    if captured and any(ep.replay_id is not None for ep in episodes):
+    if (captured or evaluation_ids is not None) and any(ep.replay_id is not None for ep in episodes):
         records = []
         for ep in episodes:
             if ep.replay_id is None:
@@ -181,7 +174,15 @@ def update_recordings(archive, episodes, update, experiment, run_experiment, cap
                     or record['result']['ranking'] != list(ep.result.ranking)):
                 raise ValueError('captured training recording disagrees with its collected game')
             records.append(record)
-        return records
+        for replay_id in evaluation_ids or ():
+            row = archive.read(replay_id)
+            if (row['game_id'] != replay_id or row['category'] != 'evaluation' or row['status'] != 'completed'
+                    or row['provenance'].get('run_experiment') != run_experiment
+                    or row['provenance'].get('update') != update):
+                raise ValueError('captured evaluation recording disagrees with update')
+            records.append(row)
+        # Captured checkpoint journals preserve collector order, followed by the evaluation suites.
+        return records if captured else sorted(records, key=lambda r: r['game_id'])
     # Legacy callers and synthetic collectors without recorders use the old lookup.
     return [r for r in archive.records() if r['provenance'].get('update') == update and
             (r['provenance'].get('experiment') == experiment or r['provenance'].get('run_experiment') == run_experiment)]
@@ -212,7 +213,16 @@ def _state(config, master, shuffle, game_id, update, league, metrics=(), manifes
                     metrics=metrics, manifests=dict(manifests or {}, checkpoint_retention=ROLLING_POLICY))
 
 
-def _train(config: TrainConfig, run_dir: Path, resume: Optional[Path] = None,
+def _train(config, run_dir, *args, **kwargs):
+    from brass_ai.replay_archive import archive_context
+    project = project_for(run_dir)
+    if project is None and not os.environ.get('BRASS_REPLAY_ROOT'):
+        raise ValueError('use a project training/runs directory or set BRASS_REPLAY_ROOT for an isolated archive')
+    with archive_context(project/'replays' if project else None):
+        return _run_training(config, run_dir, *args, **kwargs)
+
+
+def _run_training(config: TrainConfig, run_dir: Path, resume: Optional[Path] = None,
           max_updates: Optional[int] = None, *, stop_requested: Optional[Callable[[], bool]] = None,
           dynamic_members=None, stability_arm=None) -> TrainReport:
     """Train to an absolute update ceiling without changing the stored config.
@@ -311,6 +321,12 @@ def _train(config: TrainConfig, run_dir: Path, resume: Optional[Path] = None,
             first_activation = not activation.exists()
         journal = rebuild_metrics(run_dir)
         latest_policy = publish_policies(run_dir, journal)
+        if project:
+            from brass_ai.replay_archive import Archive
+            archive = Archive()
+            # Repair a previously interrupted index write on a no-game resume.
+            ids = {rid for entry in journal for rid in entry['manifests'].get('replay_ids', [])}
+            archive.rebuild(changed_ids=[rid for rid in ids if archive.path(rid).exists() or archive.path(rid, '.jsonl').exists()])
         maintain_rolling(run_dir, journal, state.development_best_id)
         restored = preflight(run_dir, experiment, effective, read_json(latest/'metadata.json')['id'],
                              resumed=resume is not None, notes=notes)
@@ -395,16 +411,18 @@ def _train(config: TrainConfig, run_dir: Path, resume: Optional[Path] = None,
                       'ppo': metrics_data, 'timings_seconds': timings, 'pool_ids': [s.id for s in league.snapshots],
                       'holdout_ids': [s.id for s in league.holdouts], 'rng_restore_notes': list(notes)}
             best = state.development_best_id
+            evaluation_ids = ()
             if config.eval.interval_updates and update % config.eval.interval_updates == 0:
                 with recording_context(run_experiment=experiment['id']):
                     development = periodic_development(model, update, league, run_dir, config, journal)
+                evaluation_ids = development.pop('recorded_replay_ids', None)
                 record['development'] = development
                 manifests['dev'] = development['manifest']
                 best = development['best_id']
             from brass_ai.replay_archive import Archive
             manifests['experiment_id'] = experiment['id']
             replay_experiment = experiment.get('legacy_replay_identity',experiment['id'])
-            recordings = update_recordings(Archive(), episodes, update, replay_experiment, experiment['id'], config.learner or stability_arm)
+            recordings = update_recordings(Archive(), episodes, update, replay_experiment, experiment['id'], config.learner or stability_arm, evaluation_ids)
             recorded_games = [r['provenance'].get('game') for r in recordings if r['category']=='training']
             if (len(set(recorded_games))!=len(recorded_games) or
                     not set(recorded_games)<={ep.game_id for ep in episodes}):
@@ -427,7 +445,9 @@ def _train(config: TrainConfig, run_dir: Path, resume: Optional[Path] = None,
                 raw_path.unlink()
             state = replace(state, league_snapshots=league.snapshots, holdouts=league.holdouts)
             journal = rebuild_metrics(run_dir)
-            latest_policy = publish_policies(run_dir, journal)
+            latest_policy = publish_policies(run_dir, journal[-1:])
+            if project is not None:
+                Archive().rebuild(changed_ids=manifests['replay_ids'])
             maintain_rolling(run_dir, journal, state.development_best_id)
             # Inspection files are disposable and never part of checkpoint truth.
             # Resume does not recollect committed games to repair missing replays.

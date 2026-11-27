@@ -15,9 +15,11 @@ from pathlib import Path
 import platform
 import shutil
 import tempfile
+from threading import local
 import uuid
 
 FORMAT = 'brass-experiment/1'
+_RUN_WRITERS = local()
 
 
 def encoded(value):
@@ -50,18 +52,31 @@ def sync_tree(root):
         sync_dir(Path(parent))
 
 
+def holds_writer_lock(run):
+    return (os.getpid(), Path(run).resolve()) in getattr(_RUN_WRITERS, 'held', ())
+
+
 @contextmanager
-def writer_lock(run):
+def writer_lock(run, *, reuse=False):
     run = Path(run).resolve()
+    key = (os.getpid(), run)
+    if not hasattr(_RUN_WRITERS, 'held'):
+        _RUN_WRITERS.held = set()
+    held = _RUN_WRITERS.held
+    if reuse and key in held:
+        yield
+        return
     run.parent.mkdir(parents=True, exist_ok=True)
     with (run.parent/('.'+run.name+'.writer.lock')).open('a+b') as stream:
         try:
             fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as exc:
             raise ValueError('experiment is active; stop its writer before transfer/resume') from exc
+        held.add(key)
         try:
             yield
         finally:
+            held.remove(key)
             fcntl.flock(stream, fcntl.LOCK_UN)
 
 
@@ -77,6 +92,18 @@ def read_experiment(run):
     if value.get('format') != FORMAT or not isinstance(value.get('id'), str):
         raise ValueError('invalid experiment manifest')
     return value
+
+
+def library_intent(run, experiment):
+    """Check the portable classification at verification and registration boundaries."""
+    from .config import BC_LEARNER, TrainConfig
+    intent = experiment.get('library_intent', 'experimental')
+    if intent not in ('mainline', 'experimental'):
+        raise ValueError('unknown portable library intent')
+    if intent == 'mainline' and (not experiment.get('parent') or experiment.get('learner') != BC_LEARNER
+            or experiment.get('mode') != 'bc-current' or TrainConfig.from_json(run/'config.json').learner != BC_LEARNER):
+        raise ValueError('mainline intent requires the supported BC continuation profile')
+    return intent
 
 
 def parent_identity(source):
@@ -120,6 +147,8 @@ def ensure_experiment(run, config, *, state=None, parent=None):
              'created_at': datetime.now(timezone.utc).isoformat(),
              'producer': {'system': platform.system(), 'machine': platform.machine(), 'python': platform.python_version()},
              'historical_gaps': ['Pre-adoption updates/models/replays may be missing; inventory required.'] if legacy else []}
+    if not legacy:
+        value['library_intent'] = 'experimental'
     if legacy:
         lineage = run/'ancestry/continuation-lineage.json'
         if lineage.exists():
@@ -187,7 +216,7 @@ def branch_experiment(checkpoint, destination):
             for pin_file in (parent/'updates/pins').glob('*.json'):
                 if json.loads(pin_file.read_bytes())['update'] <= loaded.state.completed_updates:
                     link_or_copy(pin_file, temporary/'updates/pins'/pin_file.name)
-            own = {'format': FORMAT, 'id': 'exp-'+uuid.uuid4().hex, 'mode': 'full-state-branch',
+            own = {'format': FORMAT, 'id': 'exp-'+uuid.uuid4().hex, 'mode': 'full-state-branch', 'library_intent': 'experimental',
                    'parent': {'experiment_id': metadata['id'], 'update': loaded.state.completed_updates,
                               'checkpoint_sha256': hashlib.sha256((source/'manifest.json').read_bytes()).hexdigest(),
                               'model_id': json.loads((source/'metadata.json').read_text())['id']},

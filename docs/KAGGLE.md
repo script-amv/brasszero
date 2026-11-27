@@ -10,7 +10,7 @@ The source revision is sealed when preparing a job. Commit the logging change be
 
 ## Supported BC continuation
 
-Use a new private job and the reviewed source revision. Set `SOURCE` to the chosen numeric full checkpoint, `PRIVATE` to an existing private working directory, `KERNEL` to a fresh account/slug, and `BRASS_CONTROL_ENDPOINT` to the trusted control origin. The seed command forks the supported learner, verifies its base and seals `seed.tar.gz` plus `seed.tar.json`. It consumes zero games. The following example gives the child up to three hours of training and a separate provider window of three hours and 55 minutes.
+Use a new private job and the reviewed source revision. Set `PROJECT` to the destination data project and `SOURCE` to the chosen numeric full checkpoint, `PRIVATE` to an existing private working directory, `KERNEL` to a fresh account/slug, and `BRASS_CONTROL_ENDPOINT` to the trusted control origin. The seed command forks the supported learner, verifies its base and seals `seed.tar.gz` plus `seed.tar.json`. It consumes zero games. The following example gives the child up to three hours of training and a separate provider window of three hours and 55 minutes.
 
 ```sh
 export PYTHONPATH="$PWD/engine/tools:$PWD/training:$PWD/players/search"
@@ -18,7 +18,7 @@ py=training/.venv/bin/python
 control=training/scripts/kaggle_control
 "$py" "$control/prepare.py" seed-bc "$SOURCE" "$PRIVATE/seed.tar.gz" --max-wall-time-seconds 10800
 deadline=$(( $(date +%s) + 14100 ))
-"$py" "$control/prepare.py" prepare "$PRIVATE/seed.tar.gz" "$PRIVATE/seed.tar.json" "$PRIVATE/job" "$KERNEL" "$deadline" --stage resume
+"$py" "$control/prepare.py" prepare "$PRIVATE/seed.tar.gz" "$PRIVATE/seed.tar.json" "$PRIVATE/job" "$KERNEL" "$deadline" --stage resume --project-root "$PROJECT"
 ```
 
 Register the prepared `job/registration.json` at the control service's run-scoped KV key `RUN/config` and upload only `job/dataset` to its named private Kaggle input dataset. Keep owner credentials local. The existing CPU-only submit and owner commands operate on this same job directory:
@@ -32,3 +32,12 @@ Register the prepared `job/registration.json` at the control service's run-scope
 For a deadline stop, use `watch --wait-download` in place of the manual stop. After provider publication, `download` retrieves and verifies the pinned return. The child stores its 10,800-second training wall budget in its immutable base config. The trainer admits whole updates within that budget, accounting for checkpoint margin and observed update duration. The example provider window adds 15 minutes for setup, 30 minutes for export and 10 minutes for an update. Longer setup, queue delays or slow updates can shorten the training window. The control receipt reports a scheduled wall-budget cutoff as `deadline`. The capacity guard also accounts for free space and the size of the return archive. Stop commands allow an admitted update to finish.
 
 `job/verified/verified.json` identifies the experiment, source manifest, base, tip, game cursor, actor and critic Adam summaries and replay count. Verification checks immutable prefix files, full latest optimizer, per-update playable exports, replay actions and native results. It reconstructs the eight sampled lineups from each previous checkpoint and checks the next exposure table against their native places. Further authorized continuation can use the returned `continuation.tar.gz` and `verified.json` as the two inputs to a fresh `prepare --stage resume` job. Historical 843 seed/proof procedures keep their original source pins and checks.
+
+
+The owner keeps the destination project in its local job metadata. A successful `download` or `watch --wait-download` also registers verified models, training recordings and the returned experiment there. The seed carries its source activation's lineage intent. Use `seed-bc --experimental` to override a supported continuation from the current mainline tip.
+
+To register an existing sealed return using a reviewed host checkout, run the following command. Keep the original private job directory, its starting archive and its parent experiment in the destination project. The host extracts the return afresh, checks the sealed seed and return digests, verifies the prefix, native outcomes and BC controller state, then imports the immutable units. Repeating the command repairs derived metadata.
+
+```sh
+training/.venv/bin/python -m brass_rl library ingest-kaggle --project-root "$PROJECT" --verified "$PRIVATE/job/verified"
+```

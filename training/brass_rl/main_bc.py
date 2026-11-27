@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Normal supported BC training and the explicit historical BC788 continuation."""
 import hashlib
+import os
 from pathlib import Path
 
 from . import experiments
@@ -57,7 +58,7 @@ def continue_bc(ceiling, stop, *, dynamic=False):
     return train(config, run, run/'latest', max_updates=ceiling, stop_requested=stop, dynamic_members=members)
 
 
-def train_bc(run, ceiling, stop, *, source=None, max_wall_time_seconds=None):
+def train_bc(run, ceiling, stop, *, source=None, max_wall_time_seconds=None, experimental=False):
     from .bc_current import fork_bc
     from .config import BC_LEARNER
     from .train import train
@@ -66,9 +67,13 @@ def train_bc(run, ceiling, stop, *, source=None, max_wall_time_seconds=None):
     run = Path(run)
     if ceiling < 0 or (source is not None and Path(source).name.isdecimal() and ceiling < int(Path(source).name)):
         raise ValueError('absolute update ceiling precedes the requested boundary')
+    if experiments.project_for(run) is None and not os.environ.get('BRASS_REPLAY_ROOT'):
+        raise ValueError('use a project training/runs directory or set BRASS_REPLAY_ROOT for an isolated archive')
     if source is not None:
         torch.set_num_threads(1)
-        fork_bc(source, run, max_wall_time_seconds=max_wall_time_seconds)
+        fork_bc(source, run, max_wall_time_seconds=max_wall_time_seconds, experimental=experimental)
+    elif experimental:
+        raise ValueError('--experimental requires activation with --source')
     elif max_wall_time_seconds is not None:
         raise ValueError('--max-wall-time-seconds requires activation with --source')
     cfg = TrainConfig.from_json(run/'config.json')
