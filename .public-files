@@ -220,6 +220,7 @@ site/src/styles/global.css
 site/src/styles/tokens.css
 site/tsconfig.json
 tests/test_publication.py
+tests/test_release.py
 training/brass_rl/__init__.py
 training/brass_rl/__main__.py
 training/brass_rl/agent.py

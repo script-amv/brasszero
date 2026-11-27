@@ -18,7 +18,7 @@
 
 ## Use and training
 
-This policy plays four-player Brass: Birmingham from native observations and public events. It was trained with self-play and PPO. Intended uses include gameplay, evaluation, and research. {{TRAINING}} The release reviewer should verify the full lineage and opponent mixture.
+This policy plays four-player Brass: Birmingham from native observations and public events. It was trained with PPO against itself and a league of opponents. Intended uses include gameplay, evaluation, and research. {{TRAINING}} The [model repository](https://huggingface.co/brasszero/brasszero-ppo) describes the full training line.
 
 ## Evaluation and limitations
 
