@@ -30,7 +30,7 @@ For frozen-model inference, install the optional CPU runtime and download a publ
 - `site/` contains the static research site and compact measured aggregates.
 - `docs/` contains [results](docs/RESULTS.md), [training history](docs/TRAINING-HISTORY.md), the [dataset description](docs/DATASHEET.md) and [maintenance commands](docs/MAINTAINING.md).
 
-Selected model checkpoints are published on [Hugging Face](https://huggingface.co/brasszero/brasszero-ppo) under Apache-2.0, with a model card and checksums. A snapshot of machine-only games from 27 November 2026 is published as a [Hugging Face dataset](https://huggingface.co/datasets/brasszero/brasszero-games) under CC BY 4.0. Tagged GitHub releases and a citable Zenodo record are planned and not yet published. Raw training runs stay private. Cite the version using [CITATION.cff](CITATION.cff).
+Selected model checkpoints are published on [Hugging Face](https://huggingface.co/brasszero/brasszero-ppo) under Apache-2.0, with a model card and checksums. A snapshot of machine-only games from 27 November 2026 is published as a [Hugging Face dataset](https://huggingface.co/datasets/brasszero/brasszero-games) under CC BY 4.0. Version 0.1.0 on the [GitHub releases page](https://github.com/script-amv/brasszero/releases) carries the BC 788 archive. A citable Zenodo record is planned and not yet published. Raw training runs stay private. Cite the version using [CITATION.cff](CITATION.cff).
 
 Developed by the author with AI coding assistants (Claude Code, Codex).
 
